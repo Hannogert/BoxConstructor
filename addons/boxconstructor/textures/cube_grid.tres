@@ -1,0 +1,9 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3 uid="uid://iwvr14kdcfog"]
+
+[ext_resource type="Shader" uid="uid://qnh11q0505w1" path="res://addons/qb2/textures/grid_shader.gdshader" id="1_uxs6n"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_uxs6n")
+shader_parameter/grid_scale = 5.0
+shader_parameter/camera_distance = 0.0
