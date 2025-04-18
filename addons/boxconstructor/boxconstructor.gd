@@ -1,54 +1,79 @@
 @tool
 extends EditorPlugin
 
-# Constants
+# === Constants ===
 enum BuildMode {
 	SELECT,
 	ADD
 }
 
-const DISTANCE_THRESHOLD_SMALL := 50.0
-const DISTANCE_THRESHOLD_MEDIUM := 500.0
-const DISTANCE_THRESHOLD_LARGE := 5000.0
+const DISTANCE_THRESHOLD_SMALL = 50.0
+const DISTANCE_THRESHOLD_MEDIUM = 500.0
+const DISTANCE_THRESHOLD_LARGE = 5000.0
+const GRID_SCALE_SMALL = 10.0
+const GRID_SCALE_MEDIUM = 100.0
+const GRID_SCALE_LARGE = 1000.0
+const BASE_PREVIEW_THICKNESS = 0.02
 
-const GRID_SCALE_SMALL := 10.0
-const GRID_SCALE_MEDIUM := 100.0
-const GRID_SCALE_LARGE := 1000.0
-
-const BASE_PREVIEW_THICKNESS := 0.02
-
-# Core properties
+# === Editor properties ===
 var current_mode: BuildMode = BuildMode.SELECT
-var voxel_root: CSGCombiner3D
-var selected_grid: CubeGrid3D
 var toolbar: PanelContainer
 var editor_viewport = get_editor_interface().get_editor_viewport_3d()
-var voxel_size
-var voxel_mesh: MeshInstance3D = null
 var camera = editor_viewport.get_camera_3d()
 
-# Drawing properties
+# === Grid and Voxel properties ===
+var voxel_root: CSGCombiner3D
+var selected_grid: CubeGrid3D
+var voxel_mesh: MeshInstance3D = null
+var voxel_size
+
+# === Rectangle drawing properties ===
 var is_drawing: bool = false
 var draw_normal: Vector3 = Vector3.UP
 var draw_start: Vector3 = Vector3()
 var draw_end: Vector3 = Vector3()
-var draw_plane: Plane
-var is_extruding: bool = false
 var draw_preview: MeshInstance3D = null
+var draw_plane: Plane
+var base_rect_points: Array = []
+
+# === Extrusion properties ===
+var is_extruding: bool = false
 var has_started_extrusion: bool = false
 var extrude_distance: float = 0.0
 var initial_extrude_point: Vector3
 var extrude_line_start: Vector3
 var extrude_line_end: Vector3
-var base_rect_points: Array = []
+
+# === Lifecycle Methods ===
+func _enter_tree() -> void:
+	get_editor_interface().get_selection().selection_changed.connect(_on_selection_changed)
+	editor_viewport = get_editor_interface().get_editor_viewport_3d()
+
+	# Create and add the toolbar to the viewport
+	toolbar = preload("res://addons/boxconstructor/scripts/toolbar.gd").new(self)
+	var viewport_base = editor_viewport.get_parent().get_parent()
+	viewport_base.add_child(toolbar)
+	toolbar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, 0, 10)
+	toolbar.hide()
+	_connect_toolbar_signals()
+
+func _exit_tree() -> void:
+	# Remove the toolbar from the viewport
+	if toolbar:
+		toolbar.queue_free()
+	# Disconnect signals
+	if get_editor_interface().get_selection().selection_changed.is_connected(_on_selection_changed):
+		get_editor_interface().get_selection().selection_changed.disconnect(_on_selection_changed)
 
 func _process(_delta: float) -> void:
+	# Change the grid scaled based on the camera distance to the grid
 	if selected_grid and editor_viewport:
 		if camera and selected_grid.grid_material:
 			if selected_grid.grid_scale == 0:
-				var distance = camera.global_position.distance_to(selected_grid.global_position)
+				# Use the y distance of the camera to determine the grid scale
+				var distance = abs(camera.global_position.y - selected_grid.global_position.y)
 				selected_grid.grid_material.set_shader_parameter("camera_distance", distance)
-				
+				# Set the grid scale based on the distance
 				if distance > DISTANCE_THRESHOLD_LARGE:
 					selected_grid.grid_material.set_shader_parameter("grid_scale", GRID_SCALE_LARGE)
 				elif distance > DISTANCE_THRESHOLD_MEDIUM:
@@ -58,82 +83,8 @@ func _process(_delta: float) -> void:
 				else:
 					selected_grid.grid_material.set_shader_parameter("grid_scale", 1.0)
 
-func _on_grid_size_changed(size: int) -> void:
-	var selected = get_editor_interface().get_selection().get_selected_nodes()
-	if selected.size() > 0 and selected[0] is CubeGrid3D:
-		selected[0].grid_scale = size
-		selected[0]._update_material()
-
-func _enter_tree() -> void:
-	get_editor_interface().get_selection().selection_changed.connect(_on_selection_changed)
-	editor_viewport = get_editor_interface().get_editor_viewport_3d()
-
-	toolbar = preload("res://addons/boxconstructor/scripts/toolbar.gd").new(self)
-	var viewport_base = editor_viewport.get_parent().get_parent()
-	viewport_base.add_child(toolbar)
-	toolbar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, 0, 10)
-	toolbar.hide()
-	_connect_toolbar_signals()
-
-func _exit_tree() -> void:
-	if toolbar:
-		toolbar.queue_free()
-	if get_editor_interface().get_selection().selection_changed.is_connected(_on_selection_changed):
-		get_editor_interface().get_selection().selection_changed.disconnect(_on_selection_changed)
-
-func _on_selection_changed() -> void:
-	var selected = get_editor_interface().get_selection().get_selected_nodes()
-	if selected.size() == 1 and selected[0] is CubeGrid3D:
-		selected_grid = selected[0]
-		voxel_root = selected_grid.get_node("CSGCombiner3D")
-		toolbar.show()
-		# Update toolbar button states based on voxel_root content
-		_update_toolbar_states()
-	else:
-		selected_grid = null
-		voxel_root = null
-		toolbar.hide()
-
-func _update_toolbar_states() -> void:
-	if not voxel_root:
-		return
-		
-	var has_voxel_mesh = voxel_root.has_node("VoxelMesh")
-	var has_csg_boxes = false
-	
-	for child in voxel_root.get_children():
-		if child is CSGBox3D:
-			has_csg_boxes = true
-			break
-			
-	if has_voxel_mesh:
-		toolbar.update_button_states(true) 
-	else:
-		toolbar.update_button_states(false)
-	toolbar.set_edit_button_enabled(has_voxel_mesh)
-
-func _connect_toolbar_signals() -> void:
-	toolbar.select_button_pressed.connect(func(): _change_mode(BuildMode.SELECT))
-	toolbar.add_button_pressed.connect(func(): _change_mode(BuildMode.ADD))
-	toolbar.grid_size_changed.connect(_on_grid_size_changed)
-	toolbar.reset_grid_pressed.connect(_reset_grid_transform)
-	toolbar.merge_mesh.connect(_on_merge_mesh)
-	toolbar.edit_mesh.connect(_on_edit_mesh)
-	
-func _change_mode(new_mode: BuildMode) -> void:
-	if new_mode == BuildMode.ADD and voxel_root and voxel_root.has_node("VoxelMesh"):
-		push_warning("Can't switch to ADD mode while VoxelMesh exists. Use Edit to modify.")
-		toolbar.set_active_mode(current_mode)
-		return
-
-	current_mode = new_mode
-	toolbar.set_active_mode(current_mode)
-	
-	if voxel_root:
-		voxel_root.set_meta("_edit_lock_", current_mode != BuildMode.SELECT)
-
-
 func _input(event: InputEvent) -> void:
+	# Allow the plane to be moved when the X key is pressed
 	if event is InputEventKey and event.pressed and event.keycode == KEY_X:
 		if not camera or not selected_grid:
 			return
@@ -145,11 +96,13 @@ func _input(event: InputEvent) -> void:
 		if hit:
 			print("Hit position: ", hit.position)
 			_align_grid_to_normal(hit.normal, hit.position)
+
 	if current_mode == BuildMode.ADD:
 		if event is InputEventMouseButton:
 			if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 				if not camera: return
-				
+
+				# Draw the base rectangle
 				if not is_drawing:
 					var ray_query = PhysicsRayQueryParameters3D.new()
 					ray_query.from = camera.project_ray_origin(editor_viewport.get_mouse_position())
@@ -165,7 +118,8 @@ func _input(event: InputEvent) -> void:
 						draw_plane = Plane(draw_normal, hit.position.dot(draw_normal))
 						create_rectangle_preview()
 						_calculate_base_rect_points()
-						
+
+				# Start extruding the rectangle
 				elif not is_extruding:
 					is_extruding = true
 					has_started_extrusion = false
@@ -180,7 +134,8 @@ func _input(event: InputEvent) -> void:
 						extrude_line_start = initial_extrude_point - draw_normal * 500.0
 						extrude_line_end = initial_extrude_point + draw_normal * 500.0
 						_update_rectangle_preview()
-				
+
+				# Create the new box
 				else:
 					_create_rectangle_voxels()
 					is_drawing = false
@@ -189,7 +144,8 @@ func _input(event: InputEvent) -> void:
 					if draw_preview:
 						draw_preview.queue_free()
 						draw_preview = null
-			
+
+			# Cancel the drawing
 			elif event.button_index == MOUSE_BUTTON_MIDDLE and event.pressed:
 				is_drawing = false
 				is_extruding = false
@@ -197,7 +153,8 @@ func _input(event: InputEvent) -> void:
 				if draw_preview:
 					draw_preview.queue_free()
 					draw_preview = null
-					
+
+		# Update section		
 		elif event is InputEventMouseMotion:
 			if is_drawing and not is_extruding:
 				if not camera: return
@@ -220,7 +177,6 @@ func _input(event: InputEvent) -> void:
 				if not has_started_extrusion:
 					if event.relative.length() > 0.01:
 						has_started_extrusion = true
-						#print("Started extrusion")
 				
 				if has_started_extrusion:
 					var mouse_point = from + dir * camera.position.distance_to(initial_extrude_point)
@@ -233,12 +189,12 @@ func _input(event: InputEvent) -> void:
 					var grid_unit = 1.0
 					if camera:
 						var distance = camera.global_position.distance_to(initial_extrude_point)
-						if distance > 50.0:
-							grid_unit = 10.0
-						if distance > 500.0:
-							grid_unit = 100.0
-						if distance > 5000.0:
-							grid_unit = 1000.0
+						if distance > DISTANCE_THRESHOLD_SMALL:
+							grid_unit = GRID_SCALE_SMALL
+						if distance > DISTANCE_THRESHOLD_MEDIUM:
+							grid_unit = GRID_SCALE_MEDIUM
+						if distance > DISTANCE_THRESHOLD_LARGE:
+							grid_unit = GRID_SCALE_LARGE
 					
 					var new_distance = round(raw_distance / grid_unit) * grid_unit
 					
@@ -246,23 +202,33 @@ func _input(event: InputEvent) -> void:
 						extrude_distance = new_distance
 						_update_rectangle_preview()
 
+# === Grid Methods ===
+func _on_grid_size_changed(size: int) -> void:
+	var selected = get_editor_interface().get_selection().get_selected_nodes()
+	if selected.size() > 0 and selected[0] is CubeGrid3D:
+		selected[0].grid_scale = size
+		selected[0]._update_material()
+	
 func _snap_to_grid(pos: Vector3) -> Vector3:
 	if not selected_grid:
 		return pos
-	
+
+	# Default smallest unit
 	var grid_unit = 1.0
 
+	# If we have set our own grid scale use that for snapping
 	if selected_grid.grid_scale != 0:
 		grid_unit = selected_grid.grid_scale
 	else:
+		# Dynamically set the snap
 		if camera:
 			var distance = camera.global_position.distance_to(pos)
-			if distance > 50.0:
-				grid_unit = 10.0
-			if distance > 500.0:
-				grid_unit = 100.0
-			if distance > 5000.0:
-				grid_unit = 1000.0
+			if distance > DISTANCE_THRESHOLD_SMALL:
+				grid_unit = GRID_SCALE_SMALL
+			if distance > DISTANCE_THRESHOLD_MEDIUM:
+				grid_unit = GRID_SCALE_MEDIUM
+			if distance > DISTANCE_THRESHOLD_LARGE:
+				grid_unit = GRID_SCALE_LARGE
 	
 	return Vector3(
 		round(pos.x / grid_unit) * grid_unit,
@@ -270,12 +236,73 @@ func _snap_to_grid(pos: Vector3) -> Vector3:
 		round(pos.z / grid_unit) * grid_unit
 	)
 
+func _align_grid_to_normal(normal: Vector3, hit_position: Vector3) -> void:
+	if not selected_grid:
+		return
+	
+	var mesh = selected_grid.get_node_or_null("CubeGridMesh3D")
+	var collision = selected_grid.get_node_or_null("CubeGridCollisionShape3D")
+	
+	if not mesh or not collision:
+		return
+	# Store scales to reset later
+	var mesh_scale = mesh.scale
+	var collision_scale = collision.scale
+
+	# Align the grid to the normal
+	var normalized_normal = normal.normalized()
+	var up = -normalized_normal
+	var right = up.cross(Vector3.UP)
+	if right.length() < 0.1:
+		right = up.cross(Vector3.RIGHT)
+	right = right.normalized()
+	var forward = up.cross(right)
+	var rotation = Transform3D(right, up, forward, Vector3.ZERO)
+	var offset_position = hit_position + normalized_normal * 0.01
+	var transform = Transform3D(rotation.basis, offset_position)
+	
+	# Apply the transform and restore the scale
+	mesh.transform = transform
+	collision.transform = transform
+	mesh.scale = mesh_scale
+	collision.scale = collision_scale
+	
+	# Update the shader
+	if selected_grid.grid_material:
+		selected_grid.grid_material.set_shader_parameter("up_vector", normalized_normal)
+		selected_grid._update_material()
+
+func _reset_grid_transform() -> void:
+	if not selected_grid:
+		return
+		
+	var mesh = selected_grid.get_node_or_null("CubeGridMesh3D")
+	var collision = selected_grid.get_node_or_null("CubeGridCollisionShape3D")
+	
+	if not mesh or not collision:
+		return
+		
+	var mesh_scale = mesh.scale
+	var collision_scale = collision.scale
+	
+	# Reset the transform
+	mesh.transform = Transform3D()
+	collision.transform = Transform3D()
+	
+	mesh.scale = mesh_scale
+	collision.scale = collision_scale
+	
+	if selected_grid.grid_material:
+		selected_grid.grid_material.set_shader_parameter("up_vector", Vector3.UP)
+		selected_grid._update_material()
+
+# === Drawing Methods ===
 func _calculate_base_rect_points() -> void:
 	if not selected_grid:
 		return
 		
+	# Get the grid unit size	
 	var grid_unit = 1.0 
-
 	if selected_grid.grid_scale != 0:
 		grid_unit = selected_grid.grid_scale
 		if grid_unit == 1.0:
@@ -283,13 +310,14 @@ func _calculate_base_rect_points() -> void:
 	else:
 		if camera:
 			var distance = camera.global_position.distance_to(draw_start)
-			if distance > 50.0:
-				grid_unit = 10.0
-			if distance > 500.0:
-				grid_unit = 100.0
-			if distance > 5000.0:
-				grid_unit = 1000.0
+			if distance > DISTANCE_THRESHOLD_SMALL:
+				grid_unit = GRID_SCALE_SMALL
+			if distance > DISTANCE_THRESHOLD_MEDIUM:
+				grid_unit = GRID_SCALE_MEDIUM
+			if distance > DISTANCE_THRESHOLD_LARGE:
+				grid_unit = GRID_SCALE_LARGE
 	
+	# Calculate the base rectangle points
 	var min_x = floor(min(draw_start.x, draw_end.x) / grid_unit) * grid_unit
 	var max_x = ceil(max(draw_start.x, draw_end.x) / grid_unit) * grid_unit
 	var min_y = floor(min(draw_start.y, draw_end.y) / grid_unit) * grid_unit
@@ -320,9 +348,11 @@ func _calculate_base_rect_points() -> void:
 		]
 
 func create_rectangle_preview() -> void:
+	# Clear the previous preview
 	if draw_preview:
 		draw_preview.queue_free()
 	
+	# Create a new preview 
 	draw_preview = MeshInstance3D.new()
 	var immediate_mesh = ImmediateMesh.new()
 	draw_preview.mesh = immediate_mesh
@@ -347,6 +377,7 @@ func _update_rectangle_preview() -> void:
 	var thickness = base_thickness
 	var grid_unit = 1.0
 	
+	# Scale the thickness of the lines based on the distance of the camera
 	if camera:
 		var distance = camera.global_position.distance_to(draw_start)
 		if distance > DISTANCE_THRESHOLD_SMALL:
@@ -366,6 +397,7 @@ func _update_rectangle_preview() -> void:
 	for point in base_rect_points:
 		preview_points.append(point + preview_offset)
 
+	# Rectangle base lines
 	for i in range(preview_points.size()):
 		add_thick_line(
 			immediate_mesh,
@@ -373,7 +405,7 @@ func _update_rectangle_preview() -> void:
 			preview_points[(i + 1) % preview_points.size()],
 			thickness
 		)
-	
+	# Extrusion lines
 	if is_extruding:
 		add_thick_line(immediate_mesh, 
 			initial_extrude_point + preview_offset,
@@ -443,6 +475,8 @@ func add_thick_line(immediate_mesh: ImmediateMesh, start: Vector3, end: Vector3,
 	immediate_mesh.surface_add_vertex(v4_up)
 	immediate_mesh.surface_add_vertex(v2_up)
 
+
+# === Voxel Management Methods ===
 func _create_rectangle_voxels() -> void:
 	var new_voxel = CSGBox3D.new()
 	new_voxel.use_collision = true
@@ -453,6 +487,7 @@ func _create_rectangle_voxels() -> void:
 	var min_point = base_rect_points[0]
 	var max_point = base_rect_points[0]
 	
+	# Minimum and maximum points of the base rectangle
 	for point in base_rect_points:
 		min_point = Vector3(
 			min(min_point.x, point.x),
@@ -464,10 +499,12 @@ func _create_rectangle_voxels() -> void:
 			max(max_point.y, point.y),
 			max(max_point.z, point.z)
 		)
-	
+
+	# Initial size and center of the box
 	var size = (max_point - min_point)
 	var center = (max_point + min_point) * 0.5
 	
+	# Adjust size and center based on the extrusion
 	if draw_normal.abs().is_equal_approx(Vector3.UP) or draw_normal.abs().is_equal_approx(Vector3.DOWN):
 		size.y = abs(extrude_distance)
 		center += draw_normal * (extrude_distance * 0.5)
@@ -480,6 +517,8 @@ func _create_rectangle_voxels() -> void:
 		
 	new_voxel.size = size
 	new_voxel.position = center
+
+	# Depending on the extrusion distance set the operation
 	if extrude_distance < 0:
 		new_voxel.operation = CSGShape3D.OPERATION_SUBTRACTION
 
@@ -493,6 +532,7 @@ func _on_merge_mesh() -> void:
 		push_warning("There are no cubes to Merge!")
 		return
 	
+	# Boxes that we should keep in the final mesh
 	var voxels_to_keep = []
 	for voxel in voxel_root.get_children():
 		if not (voxel is CSGBox3D):
@@ -502,6 +542,7 @@ func _on_merge_mesh() -> void:
 			voxel.position - (voxel.size * 0.5), 
 			voxel.size
 		)
+		# Only keep boxes that subtract from a union box
 		if voxel.operation == CSGShape3D.OPERATION_SUBTRACTION:
 			var cuts_something = false
 			for other_voxel in voxel_root.get_children():
@@ -517,7 +558,8 @@ func _on_merge_mesh() -> void:
 				voxels_to_keep.append(voxel)
 		else:
 			voxels_to_keep.append(voxel)
-	
+
+	# Store voxel data for later reconstruction
 	var voxels_data = []
 	for voxel in voxels_to_keep:
 		voxels_data.append(_store_voxel_data(voxel))
@@ -529,7 +571,8 @@ func _on_merge_mesh() -> void:
 			voxel_mesh.name = "VoxelMesh"
 			voxel_root.add_child(voxel_mesh)
 			voxel_mesh.owner = get_editor_interface().get_edited_scene_root()
-		
+
+		# Assign the mesh to the VoxelMesh
 		voxel_mesh.mesh = meshes[1]
 		
 		voxel_mesh.set_meta("voxel_data", {
@@ -541,6 +584,7 @@ func _on_merge_mesh() -> void:
 			if child != voxel_mesh:
 				child.queue_free()
 		_update_toolbar_states()
+		_change_mode(BuildMode.SELECT)
 		
 func _on_edit_mesh() -> void:
 	if not voxel_root:
@@ -571,14 +615,14 @@ func _convert_to_voxels() -> void:
 	if not voxel_mesh:
 		push_warning("No VoxelMesh node found!")
 		return
-		
+	
+	# Get the metadata from the VoxelMesh
 	var data = voxel_mesh.get_meta("voxel_data")
 	if not data:
 		push_warning("No voxel data found in mesh!")
 		return
 	
-	voxel_size = data.voxel_size
-	
+	# Reconstruct the boxes
 	for voxel_info in data["voxels"]:
 		var new_voxel = CSGBox3D.new()
 		new_voxel.position = voxel_info["position"]
@@ -598,57 +642,54 @@ func _convert_to_voxels() -> void:
 	toolbar.update_button_states(false)
 	_change_mode(BuildMode.SELECT)
 
-func _align_grid_to_normal(normal: Vector3, hit_position: Vector3) -> void:
-	if not selected_grid:
-		return
-	
-	var mesh = selected_grid.get_node_or_null("CubeGridMesh3D")
-	var collision = selected_grid.get_node_or_null("CubeGridCollisionShape3D")
-	
-	if not mesh or not collision:
-		return
-		
-	var mesh_scale = mesh.scale
-	var collision_scale = collision.scale
-	var normalized_normal = normal.normalized()
-	var up = -normalized_normal
-	var right = up.cross(Vector3.UP)
-	if right.length() < 0.1:
-		right = up.cross(Vector3.RIGHT)
-	right = right.normalized()
-	var forward = up.cross(right)
-	var rotation = Transform3D(right, up, forward, Vector3.ZERO)
-	var offset_position = hit_position + normalized_normal * 0.01
-	var transform = Transform3D(rotation.basis, offset_position)
-	
-	mesh.transform = transform
-	collision.transform = transform
-	mesh.scale = mesh_scale
-	collision.scale = collision_scale
-	
-	if selected_grid.grid_material:
-		selected_grid.grid_material.set_shader_parameter("up_vector", normalized_normal)
-		selected_grid._update_material()
 
-func _reset_grid_transform() -> void:
-	if not selected_grid:
+# === UI Management Methods ===
+func _connect_toolbar_signals() -> void:
+	toolbar.select_button_pressed.connect(func(): _change_mode(BuildMode.SELECT))
+	toolbar.add_button_pressed.connect(func(): _change_mode(BuildMode.ADD))
+	toolbar.grid_size_changed.connect(_on_grid_size_changed)
+	toolbar.reset_grid_pressed.connect(_reset_grid_transform)
+	toolbar.merge_mesh.connect(_on_merge_mesh)
+	toolbar.edit_mesh.connect(_on_edit_mesh)
+
+func _update_toolbar_states() -> void:
+	if not voxel_root:
 		return
 		
-	var mesh = selected_grid.get_node_or_null("CubeGridMesh3D")
-	var collision = selected_grid.get_node_or_null("CubeGridCollisionShape3D")
+	var has_voxel_mesh = voxel_root.has_node("VoxelMesh")
+	var has_csg_boxes = false
 	
-	if not mesh or not collision:
+	for child in voxel_root.get_children():
+		if child is CSGBox3D:
+			has_csg_boxes = true
+			break
+			
+	if has_voxel_mesh:
+		toolbar.update_button_states(true) 
+	else:
+		toolbar.update_button_states(false)
+	toolbar.set_edit_button_enabled(has_voxel_mesh)
+
+func _on_selection_changed() -> void:
+	var selected = get_editor_interface().get_selection().get_selected_nodes()
+	if selected.size() == 1 and selected[0] is CubeGrid3D:
+		selected_grid = selected[0]
+		voxel_root = selected_grid.get_node("CSGCombiner3D")
+		toolbar.show()
+		_update_toolbar_states()
+	else:
+		selected_grid = null
+		voxel_root = null
+		toolbar.hide()
+
+func _change_mode(new_mode: BuildMode) -> void:
+	if new_mode == BuildMode.ADD and voxel_root and voxel_root.has_node("VoxelMesh"):
+		push_warning("Can't switch to ADD mode while VoxelMesh exists. Use Edit to modify.")
+		toolbar.set_active_mode(current_mode)
 		return
-		
-	var mesh_scale = mesh.scale
-	var collision_scale = collision.scale
+
+	current_mode = new_mode
+	toolbar.set_active_mode(current_mode)
 	
-	mesh.transform = Transform3D()
-	collision.transform = Transform3D()
-	
-	mesh.scale = mesh_scale
-	collision.scale = collision_scale
-	
-	if selected_grid.grid_material:
-		selected_grid.grid_material.set_shader_parameter("up_vector", Vector3.UP)
-		selected_grid._update_material()
+	if voxel_root:
+		voxel_root.set_meta("_edit_lock_", current_mode != BuildMode.SELECT)

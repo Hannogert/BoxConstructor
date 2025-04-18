@@ -27,6 +27,8 @@ your-project/
 
 ## Feature overview
 ![Toolbar](.github/images/toolbar_guide.png)
+- Middle mouse to cancel drawing
+- Clicking X on a face will move the plane to that face
 ### Extrusion
 User can extrude cubes by:
 1. Selecting Add Primitive from the toolbar.
