@@ -9,7 +9,7 @@ BoxConstructor is a Godot plugin designed for fast and efficient 3D prototyping 
 ## Installation
 1. Download or clone this repository.
 2. Copy the `addons` folder into your Godot project's root directory.
-3. In your Godot editor go to `Project` → `Project Settings` → `Plugins`.
+3. In your Godot editor, go to `Project` → `Project Settings` → `Plugins`.
 4. Find `BoxConstructor` in the plugin list and enable it by checking the box.
 
 Your directory structure should look like this:
@@ -30,25 +30,28 @@ your-project/
 - Middle mouse to cancel drawing
 - Clicking X on a face will move the plane to that face
 ### Extrusion
-User can extrude cubes by:
+The user can extrude cubes by:
 1. Selecting Add Primitive from the toolbar.
-2. Clicking to start drawing the base rectangle.
-3. Clicking again to finalize the base rectangle, which then enters extrusion mode.
+2. Click to start drawing the base rectangle.
+3. Clicking again to finalise the base rectangle, which enters extrusion mode.
 4. Moving the mouse to set the desired extrusion depth.
-5. Clicking once more to finalize the extrusion.
+5. Clicking once more to finalise the extrusion.
 
 ![Extrude_example](.github/images/extrude_cut.gif)
+
 Depending on the extrusion direction:
 - Extrusion along the surface normal adds geometry.
 - Extrusion in the opposite direction removes geometry.
 
 ## Plane movement
 The drawing plane can be snapped to a face by pressing the X key while the mouse is over the face.
+
 ![Plane_movement](.github/images/plane_movement.gif)
-You can reset the plane's transform by selecting Reset Grid on the toolbar or by pressing Z.
+
+You can reset the plane's transform by selecting Reset Grid on the toolbar or pressing Z.
 
 ## Edge movement
-Edges can be moved by using the Select Edge tool
 ![Edge_movement](.github/images/edge_movement.gif)
 
+Edges can be moved by using the Select Edge tool
 
