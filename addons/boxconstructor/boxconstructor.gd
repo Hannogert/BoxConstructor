@@ -3,16 +3,17 @@ extends EditorPlugin
 
 # === Constants ===
 enum BuildMode {
+	DISABLE,
 	SELECT,
 	ADD
 }
 
 const DISTANCE_THRESHOLD_SMALL = 50.0
 const DISTANCE_THRESHOLD_MEDIUM = 500.0
-const DISTANCE_THRESHOLD_LARGE = 5000.0
+#const DISTANCE_THRESHOLD_LARGE = 5000.0
 const GRID_SCALE_SMALL = 10.0
 const GRID_SCALE_MEDIUM = 100.0
-const GRID_SCALE_LARGE = 1000.0
+#const GRID_SCALE_LARGE = 1000.0
 const BASE_PREVIEW_THICKNESS = 0.02
 
 # === Editor properties ===
@@ -25,7 +26,6 @@ var camera = editor_viewport.get_camera_3d()
 var voxel_root: CSGCombiner3D
 var selected_grid: CubeGrid3D
 var voxel_mesh: MeshInstance3D = null
-var voxel_size
 
 # === Rectangle drawing properties ===
 var is_drawing: bool = false
@@ -44,21 +44,33 @@ var initial_extrude_point: Vector3
 var extrude_line_start: Vector3
 var extrude_line_end: Vector3
 
+# === Edge Movement properties ===
+var edge_preview: MeshInstance3D = null
+var current_edge: Array = []
+var is_dragging_edge: bool = false
+var dragged_mesh: CSGMesh3D = null
+var drag_start_position: Vector3
+var drag_plane: Plane
+var drag_start_offset: Vector3
+
+
 # === Lifecycle Methods ===
 func _enter_tree() -> void:
 	get_editor_interface().get_selection().selection_changed.connect(_on_selection_changed)
 	editor_viewport = get_editor_interface().get_editor_viewport_3d()
 
-	# Create and add the toolbar to the viewport
+	# Create the toolbar
 	toolbar = preload("res://addons/boxconstructor/scripts/toolbar.gd").new(self)
 	var viewport_base = editor_viewport.get_parent().get_parent()
 	viewport_base.add_child(toolbar)
 	toolbar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, 0, 10)
+	# Hide toolbar by default
 	toolbar.hide()
+	# Connect signals
 	_connect_toolbar_signals()
 
 func _exit_tree() -> void:
-	# Remove the toolbar from the viewport
+	# Remove the toolbar
 	if toolbar:
 		toolbar.queue_free()
 	# Disconnect signals
@@ -66,17 +78,16 @@ func _exit_tree() -> void:
 		get_editor_interface().get_selection().selection_changed.disconnect(_on_selection_changed)
 
 func _process(_delta: float) -> void:
-	# Change the grid scaled based on the camera distance to the grid
-	if selected_grid and editor_viewport:
+	# Here we change the grid scale based on the distance to the camera (y-axis)
+	if selected_grid:
 		if camera and selected_grid.grid_material:
 			if selected_grid.grid_scale == 0:
-				# Use the y distance of the camera to determine the grid scale
 				var distance = abs(camera.global_position.y - selected_grid.global_position.y)
 				selected_grid.grid_material.set_shader_parameter("camera_distance", distance)
 				# Set the grid scale based on the distance
-				if distance > DISTANCE_THRESHOLD_LARGE:
-					selected_grid.grid_material.set_shader_parameter("grid_scale", GRID_SCALE_LARGE)
-				elif distance > DISTANCE_THRESHOLD_MEDIUM:
+				#if distance > DISTANCE_THRESHOLD_LARGE:
+				#	selected_grid.grid_material.set_shader_parameter("grid_scale", GRID_SCALE_LARGE)
+				if distance > DISTANCE_THRESHOLD_MEDIUM:
 					selected_grid.grid_material.set_shader_parameter("grid_scale", GRID_SCALE_MEDIUM)
 				elif distance > DISTANCE_THRESHOLD_SMALL:
 					selected_grid.grid_material.set_shader_parameter("grid_scale", GRID_SCALE_SMALL)
@@ -84,7 +95,9 @@ func _process(_delta: float) -> void:
 					selected_grid.grid_material.set_shader_parameter("grid_scale", 1.0)
 
 func _input(event: InputEvent) -> void:
-	# Allow the plane to be moved when the X key is pressed
+	if not selected_grid or not selected_grid.is_inside_tree():
+		return
+	# Handles all the input events for the plugin
 	if event is InputEventKey and event.pressed and event.keycode == KEY_X:
 		if not camera or not selected_grid:
 			return
@@ -94,9 +107,129 @@ func _input(event: InputEvent) -> void:
 		ray_query.collide_with_bodies = true
 		var hit = get_editor_interface().get_edited_scene_root().get_world_3d().direct_space_state.intersect_ray(ray_query)
 		if hit:
-			print("Hit position: ", hit.position)
-			_align_grid_to_normal(hit.normal, hit.position)
+			#print("Hit position: ", hit.position)
+			var snapped_pos = _snap_to_grid(hit.position)
+			_align_grid_to_normal(hit.normal, snapped_pos)
+	if event is InputEventKey  and event.pressed and event.keycode == KEY_Z:
+		_reset_grid_transform()
+	# Handle Edge Movement Logic
+	if current_mode == BuildMode.SELECT:
+		if event is InputEventMouseButton:
+			if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				if not is_dragging_edge:
+					if edge_preview and edge_preview.visible:
+						for child in voxel_root.get_children():
+							if child is CSGBox3D or child is CSGMesh3D:
+								var edges = _get_edges(child)
+								for edge in edges:
+									if edge[0].is_equal_approx(current_edge[0]) and edge[1].is_equal_approx(current_edge[1]):
+										var from = camera.project_ray_origin(event.position)
+										var dir = camera.project_ray_normal(event.position)
 
+										# Create a plane for the edge to drag along
+										var edge_dir = (edge[1] - edge[0]).normalized()
+										drag_plane = Plane(edge_dir, edge[0].dot(edge_dir))
+										
+										var intersection = drag_plane.intersects_ray(from, dir)
+										if intersection:
+											# We turn the CSGBox3D into a custom mesh that allows use to move the vertecies
+											if child is CSGBox3D:
+												dragged_mesh = _convert_box_to_CSGMesh(child)
+											else:
+												dragged_mesh = child
+											is_dragging_edge = true
+											current_edge = edge
+											drag_start_offset = _snap_to_grid(intersection)
+										break
+				else:
+					is_dragging_edge = false
+					dragged_mesh = null
+					edge_preview.hide()
+					
+		if event is InputEventMouseMotion:
+			if is_dragging_edge and dragged_mesh:
+				edge_preview.hide()
+				var from = camera.project_ray_origin(event.position)
+				var dir = camera.project_ray_normal(event.position)
+				
+				# Project mouse position onto drag plane
+				var intersection = drag_plane.intersects_ray(from, dir)
+				if intersection:
+					# Calculate new position with grid snapping
+					var snapped_pos = _snap_to_grid(intersection)
+					var offset = snapped_pos - drag_start_offset
+					
+					var arr_mesh = dragged_mesh.mesh as ArrayMesh
+					if arr_mesh:
+						var arrays = arr_mesh.surface_get_arrays(0)
+						var vertices = arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+				
+						var local_edge = [
+							dragged_mesh.to_local(current_edge[0]),
+    						dragged_mesh.to_local(current_edge[1])
+						]
+						var local_offset = dragged_mesh.global_transform.basis.inverse() * offset
+						var new_vertices = PackedVector3Array()
+						new_vertices.resize(vertices.size())
+						
+						# Move vertices that match the edge points
+						for i in range(vertices.size()):
+							var vertex = vertices[i]
+							if vertex.is_equal_approx(local_edge[0]) or vertex.is_equal_approx(local_edge[1]):
+								new_vertices[i] = vertex + local_offset
+							else:
+								new_vertices[i] = vertex
+						
+						# Update the mesh
+						var new_arrays = []
+						new_arrays.resize(Mesh.ARRAY_MAX)
+						new_arrays[Mesh.ARRAY_VERTEX] = new_vertices
+						new_arrays[Mesh.ARRAY_INDEX] = arrays[Mesh.ARRAY_INDEX]
+						
+						arr_mesh.clear_surfaces()
+						arr_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, new_arrays)
+					
+						current_edge = [
+							dragged_mesh.global_transform * (local_edge[0] + local_offset),
+							dragged_mesh.global_transform * (local_edge[1] + local_offset)
+						]
+						drag_start_offset = snapped_pos
+			
+            
+			
+			# Highlight the Edge
+			elif not is_dragging_edge:
+				if not camera or not voxel_root:
+					if edge_preview:
+						edge_preview.hide()
+					return
+				
+				var mouse_pos = editor_viewport.get_mouse_position()
+				var closest_node = null
+				var closest_distance = INF
+				
+				for child in voxel_root.get_children():
+					if not (child is CSGBox3D or child is CSGMesh3D):
+						continue
+					
+					var node_center = child.global_position
+					var screen_pos = camera.unproject_position(node_center)
+					var distance = screen_pos.distance_to(mouse_pos)
+					
+					if distance < closest_distance:
+						closest_node = child
+						closest_distance = distance
+				
+				if closest_node and closest_distance < 1000:
+					var closest_edge = _find_closest_edge(closest_node, mouse_pos)
+					current_edge = closest_edge
+					_create_edge_preview(closest_edge)
+				else:
+					current_edge = []
+					if edge_preview:
+						edge_preview.hide()
+				
+	# Handle Rectangle Drawing and Extrusion Logic
 	if current_mode == BuildMode.ADD:
 		if event is InputEventMouseButton:
 			if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
@@ -137,7 +270,7 @@ func _input(event: InputEvent) -> void:
 
 				# Create the new box
 				else:
-					_create_rectangle_voxels()
+					_create_CSGBox3D()
 					is_drawing = false
 					is_extruding = false
 					has_started_extrusion = false
@@ -187,14 +320,17 @@ func _input(event: InputEvent) -> void:
 					var raw_distance = (projected_point - initial_extrude_point).dot(draw_normal)
 					
 					var grid_unit = 1.0
-					if camera:
-						var distance = camera.global_position.distance_to(initial_extrude_point)
-						if distance > DISTANCE_THRESHOLD_SMALL:
-							grid_unit = GRID_SCALE_SMALL
-						if distance > DISTANCE_THRESHOLD_MEDIUM:
-							grid_unit = GRID_SCALE_MEDIUM
-						if distance > DISTANCE_THRESHOLD_LARGE:
-							grid_unit = GRID_SCALE_LARGE
+					if selected_grid.grid_scale > 0:
+						grid_unit = selected_grid.grid_scale
+					else:
+						if camera:
+							var distance = camera.global_position.distance_to(initial_extrude_point)
+							if distance > DISTANCE_THRESHOLD_SMALL:
+								grid_unit = GRID_SCALE_SMALL
+							if distance > DISTANCE_THRESHOLD_MEDIUM:
+								grid_unit = GRID_SCALE_MEDIUM
+							#if distance > DISTANCE_THRESHOLD_LARGE:
+							#	grid_unit = GRID_SCALE_LARGE
 					
 					var new_distance = round(raw_distance / grid_unit) * grid_unit
 					
@@ -202,8 +338,10 @@ func _input(event: InputEvent) -> void:
 						extrude_distance = new_distance
 						_update_rectangle_preview()
 
+
 # === Grid Methods ===
 func _on_grid_size_changed(size: int) -> void:
+	# Update the grid material
 	var selected = get_editor_interface().get_selection().get_selected_nodes()
 	if selected.size() > 0 and selected[0] is CubeGrid3D:
 		selected[0].grid_scale = size
@@ -217,7 +355,7 @@ func _snap_to_grid(pos: Vector3) -> Vector3:
 	var grid_unit = 1.0
 
 	# If we have set our own grid scale use that for snapping
-	if selected_grid.grid_scale != 0:
+	if selected_grid.grid_scale > 0:
 		grid_unit = selected_grid.grid_scale
 	else:
 		# Dynamically set the snap
@@ -227,8 +365,8 @@ func _snap_to_grid(pos: Vector3) -> Vector3:
 				grid_unit = GRID_SCALE_SMALL
 			if distance > DISTANCE_THRESHOLD_MEDIUM:
 				grid_unit = GRID_SCALE_MEDIUM
-			if distance > DISTANCE_THRESHOLD_LARGE:
-				grid_unit = GRID_SCALE_LARGE
+			#if distance > DISTANCE_THRESHOLD_LARGE:
+			#	grid_unit = GRID_SCALE_LARGE
 	
 	return Vector3(
 		round(pos.x / grid_unit) * grid_unit,
@@ -314,8 +452,8 @@ func _calculate_base_rect_points() -> void:
 				grid_unit = GRID_SCALE_SMALL
 			if distance > DISTANCE_THRESHOLD_MEDIUM:
 				grid_unit = GRID_SCALE_MEDIUM
-			if distance > DISTANCE_THRESHOLD_LARGE:
-				grid_unit = GRID_SCALE_LARGE
+			#if distance > DISTANCE_THRESHOLD_LARGE:
+			#	grid_unit = GRID_SCALE_LARGE
 	
 	# Calculate the base rectangle points
 	var min_x = floor(min(draw_start.x, draw_end.x) / grid_unit) * grid_unit
@@ -386,9 +524,9 @@ func _update_rectangle_preview() -> void:
 		if distance > DISTANCE_THRESHOLD_MEDIUM:
 			thickness = base_thickness * 20.0
 			grid_unit = GRID_SCALE_MEDIUM
-		if distance > DISTANCE_THRESHOLD_LARGE:
-			thickness = base_thickness * 30.0
-			grid_unit = GRID_SCALE_LARGE
+		#if distance > DISTANCE_THRESHOLD_LARGE:
+		#	thickness = base_thickness * 30.0
+		#	grid_unit = GRID_SCALE_LARGE
 			
 	var preview_offset = draw_normal * (grid_unit * 0.01)
 	immediate_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -477,7 +615,7 @@ func add_thick_line(immediate_mesh: ImmediateMesh, start: Vector3, end: Vector3,
 
 
 # === Voxel Management Methods ===
-func _create_rectangle_voxels() -> void:
+func _create_CSGBox3D() -> void:
 	var new_voxel = CSGBox3D.new()
 	new_voxel.use_collision = true
 	new_voxel.set_meta("_edit_lock_", true)
@@ -528,41 +666,50 @@ func _create_rectangle_voxels() -> void:
 func _on_merge_mesh() -> void:
 	if not voxel_root or voxel_root.get_child_count() == 0:
 		return
+	# Dont allow to merge an already merged mesh
 	if voxel_root.has_node("VoxelMesh"):
-		push_warning("There are no cubes to Merge!")
+		push_warning("Already merged!")
 		return
 	
-	# Boxes that we should keep in the final mesh
-	var voxels_to_keep = []
-	for voxel in voxel_root.get_children():
-		if not (voxel is CSGBox3D):
+	if edge_preview:
+		edge_preview.queue_free()
+		edge_preview = null
+	current_edge = []
+	is_dragging_edge = false
+
+	var nodes_to_keep = []
+	for node in voxel_root.get_children():
+		if not (node is CSGBox3D or node is CSGMesh3D):
 			continue
 			
-		var voxel_bounds = AABB(
-			voxel.position - (voxel.size * 0.5), 
-			voxel.size
-		)
-		# Only keep boxes that subtract from a union box
-		if voxel.operation == CSGShape3D.OPERATION_SUBTRACTION:
+		if node.operation == CSGShape3D.OPERATION_SUBTRACTION:
 			var cuts_something = false
-			for other_voxel in voxel_root.get_children():
-				if other_voxel is CSGBox3D and other_voxel.operation == CSGShape3D.OPERATION_UNION:
-					var other_bounds = AABB(
-						other_voxel.position - (other_voxel.size * 0.5),
-						other_voxel.size
-					)
-					if voxel_bounds.intersects(other_bounds):
+			for other_node in voxel_root.get_children():
+				if other_node.operation == CSGShape3D.OPERATION_UNION:
+					if node is CSGBox3D and other_node is CSGBox3D:
+						var node_bounds = AABB(
+							node.position - (node.size * 0.5),
+							node.size
+						)
+						var other_bounds = AABB(
+							other_node.position - (other_node.size * 0.5),
+							other_node.size
+						)
+						if node_bounds.intersects(other_bounds):
+							cuts_something = true
+							break
+					else:
 						cuts_something = true
 						break
+			# Only keep if it actually cuts something
 			if cuts_something:
-				voxels_to_keep.append(voxel)
+				nodes_to_keep.append(node)
 		else:
-			voxels_to_keep.append(voxel)
+			nodes_to_keep.append(node)
 
-	# Store voxel data for later reconstruction
-	var voxels_data = []
-	for voxel in voxels_to_keep:
-		voxels_data.append(_store_voxel_data(voxel))
+	var nodes_data = []
+	for node in nodes_to_keep:
+		nodes_data.append(_store_voxel_data(node))
 	
 	var meshes = voxel_root.get_meshes()
 	if meshes.size() > 1:
@@ -572,19 +719,17 @@ func _on_merge_mesh() -> void:
 			voxel_root.add_child(voxel_mesh)
 			voxel_mesh.owner = get_editor_interface().get_edited_scene_root()
 
-		# Assign the mesh to the VoxelMesh
 		voxel_mesh.mesh = meshes[1]
-		
 		voxel_mesh.set_meta("voxel_data", {
-			"voxels": voxels_data,
-			"voxel_size": voxel_size
+			"nodes": nodes_data
 		})
 		
 		for child in voxel_root.get_children():
 			if child != voxel_mesh:
 				child.queue_free()
+				
 		_update_toolbar_states()
-		_change_mode(BuildMode.SELECT)
+		_change_mode(BuildMode.DISABLE)
 		
 func _on_edit_mesh() -> void:
 	if not voxel_root:
@@ -594,7 +739,8 @@ func _on_edit_mesh() -> void:
 	if not voxel_root.has_node("VoxelMesh"):
 		push_warning("No VoxelMesh to edit!")
 		return
-		
+
+	# Get info from the metadata
 	voxel_mesh = voxel_root.get_node("VoxelMesh")
 	var data = voxel_mesh.get_meta("voxel_data")
 	if not data:
@@ -603,12 +749,26 @@ func _on_edit_mesh() -> void:
 		
 	_convert_to_voxels()
 
-func _store_voxel_data(voxel: CSGBox3D) -> Dictionary:
-	return {
-		"position": voxel.position,
-		"operation": voxel.operation,
-		"size": voxel.size
+func _store_voxel_data(node: Node) -> Dictionary:
+	var data = {
+		"position": node.position,
+		"basis": node.transform.basis,
+		"operation": node.operation,
+		"use_collision": node.use_collision,
+		"type": "box" if node is CSGBox3D else "mesh"
 	}
+	
+	if node is CSGBox3D:
+		data["size"] = node.size
+	elif node is CSGMesh3D:
+		var mesh = node.mesh as ArrayMesh
+		if mesh:
+			# Store vertices in local space
+			data["vertices"] = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+			data["indices"] = mesh.surface_get_arrays(0)[Mesh.ARRAY_INDEX]
+	
+	return data
+
 
 func _convert_to_voxels() -> void:
 	voxel_mesh = voxel_root.get_node("VoxelMesh")
@@ -616,37 +776,52 @@ func _convert_to_voxels() -> void:
 		push_warning("No VoxelMesh node found!")
 		return
 	
-	# Get the metadata from the VoxelMesh
 	var data = voxel_mesh.get_meta("voxel_data")
 	if not data:
 		push_warning("No voxel data found in mesh!")
 		return
 	
-	# Reconstruct the boxes
-	for voxel_info in data["voxels"]:
-		var new_voxel = CSGBox3D.new()
-		new_voxel.position = voxel_info["position"]
-		new_voxel.size = voxel_info["size"]
-		new_voxel.operation = voxel_info["operation"]
-		new_voxel.use_collision = true
+	for node_info in data["nodes"]:
+		var new_node
 		
-		new_voxel.set_meta("_edit_lock_", true)
-		new_voxel.set_meta("_edit_group_", true)
-		
-		voxel_root.add_child(new_voxel)
-		new_voxel.owner = get_editor_interface().get_edited_scene_root()
+		# Based on the type, recreate CSGBox3D or CSGMesh3D
+		if node_info["type"] == "box":
+			new_node = CSGBox3D.new()
+			new_node.size = node_info["size"]
+		else:
+			new_node = CSGMesh3D.new()
+			var arr_mesh = ArrayMesh.new()
+			var arrays = []
+			arrays.resize(Mesh.ARRAY_MAX)
+			
+			arrays[Mesh.ARRAY_VERTEX] = node_info["vertices"]
+			arrays[Mesh.ARRAY_INDEX] = node_info["indices"]
+			arr_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			new_node.mesh = arr_mesh
 
+		new_node.transform = Transform3D(node_info["basis"], node_info["position"])
+		new_node.operation = node_info["operation"]
+		new_node.use_collision = node_info["use_collision"]
+		
+		new_node.set_meta("_edit_lock_", true)
+		new_node.set_meta("_edit_group_", true)
+		
+		voxel_root.add_child(new_node)
+		new_node.owner = get_editor_interface().get_edited_scene_root()
+
+	# Remove the VoxelMesh
 	voxel_mesh.queue_free()
 	voxel_mesh = null
 
 	toolbar.update_button_states(false)
-	_change_mode(BuildMode.SELECT)
+	_change_mode(BuildMode.DISABLE)
 
 
 # === UI Management Methods ===
 func _connect_toolbar_signals() -> void:
 	toolbar.select_button_pressed.connect(func(): _change_mode(BuildMode.SELECT))
 	toolbar.add_button_pressed.connect(func(): _change_mode(BuildMode.ADD))
+	toolbar.disable_button_pressed.connect(func(): _change_mode(BuildMode.DISABLE))  # Add this line
 	toolbar.grid_size_changed.connect(_on_grid_size_changed)
 	toolbar.reset_grid_pressed.connect(_reset_grid_transform)
 	toolbar.merge_mesh.connect(_on_merge_mesh)
@@ -690,6 +865,185 @@ func _change_mode(new_mode: BuildMode) -> void:
 
 	current_mode = new_mode
 	toolbar.set_active_mode(current_mode)
-	
+
+	if edge_preview:
+		edge_preview.queue_free()
+		edge_preview = null
+	current_edge = []
+	is_dragging_edge = false
+
 	if voxel_root:
 		voxel_root.set_meta("_edit_lock_", current_mode != BuildMode.SELECT)
+
+# === Edge Movement Methods ===
+func _get_edges(node: Node) -> Array:
+	var edges = []
+	
+	if node is CSGBox3D:
+		var aabb = AABB(
+			node.global_position - (node.size * 0.5),
+			node.size
+		)
+		# Create the corners of the AABB
+		var corners = [
+			Vector3(aabb.position.x, aabb.position.y, aabb.position.z),
+			Vector3(aabb.end.x, aabb.position.y, aabb.position.z),
+			Vector3(aabb.end.x, aabb.end.y, aabb.position.z),
+			Vector3(aabb.position.x, aabb.end.y, aabb.position.z),
+			Vector3(aabb.position.x, aabb.position.y, aabb.end.z),
+			Vector3(aabb.end.x, aabb.position.y, aabb.end.z),
+			Vector3(aabb.end.x, aabb.end.y, aabb.end.z),
+			Vector3(aabb.position.x, aabb.end.y, aabb.end.z)
+		]
+		# Create the edges of the AABB
+		var edge_indices = [
+			[0, 1], [1, 2], [2, 3], [3, 0],
+			[4, 5], [5, 6], [6, 7], [7, 4],
+			[0, 4], [1, 5], [2, 6], [3, 7]
+		]
+		# Create edges from the corner pairs
+		for pair in edge_indices:
+			edges.append([corners[pair[0]], corners[pair[1]]])
+			
+	elif node is CSGMesh3D:
+		var arr_mesh = node.mesh as ArrayMesh
+		if not arr_mesh:
+			return edges
+			
+		var arrays = arr_mesh.surface_get_arrays(0)
+		var vertices = arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+		var indices = arrays[Mesh.ARRAY_INDEX] as PackedInt32Array
+		var edge_set = {}
+		
+		# Go through the indicies and create an edgemap
+		for i in range(0, indices.size(), 3):
+			var tri_indices = [
+				indices[i],
+				indices[i + 1],
+				indices[i + 2]
+			]
+			
+			for j in range(3):
+				var idx1 = tri_indices[j]
+				var idx2 = tri_indices[(j + 1) % 3]
+				
+				var edge_key = str(min(idx1, idx2)) + "_" + str(max(idx1, idx2))
+				if not edge_set.has(edge_key):
+					edge_set[edge_key] = true
+					var v1 = node.global_transform * vertices[idx1]
+					var v2 = node.global_transform * vertices[idx2]
+					edges.append([v1, v2])
+	
+	return edges
+
+
+func _find_closest_edge(node: Node, mouse_pos: Vector2) -> Array:
+	if not camera:
+		return []
+		
+	var edges = _get_edges(node)
+	var closest_edge = []
+	var min_distance = 25.0
+	
+	var from = camera.project_ray_origin(mouse_pos)
+	var dir = camera.project_ray_normal(mouse_pos)
+	
+	for edge in edges:
+		var start = edge[0]
+		var end = edge[1]
+		
+		var result = Geometry3D.get_closest_points_between_segments(from, from + dir * 1000, start, end)
+		var point_on_edge = result[1]
+		var screen_point = camera.unproject_position(point_on_edge)
+		
+		var distance = screen_point.distance_to(mouse_pos)
+		var depth = camera.global_position.distance_to(point_on_edge)
+		
+		if distance < min_distance:
+			min_distance = distance
+			var min_depth = depth
+			closest_edge = edge
+	
+	return closest_edge
+
+func _create_edge_preview(edge: Array) -> void:
+	if edge.is_empty():
+		if edge_preview:
+			edge_preview.hide()
+		return
+		
+	if not edge_preview:
+		edge_preview = MeshInstance3D.new()
+		var immediate_mesh = ImmediateMesh.new()
+		edge_preview.mesh = immediate_mesh
+		
+		var material = StandardMaterial3D.new()
+		material.albedo_color = Color(1.0, 0.0, 0.0, 1.0)
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		edge_preview.material_override = material
+		
+		if voxel_root:
+			voxel_root.add_child(edge_preview)
+			edge_preview.owner = get_editor_interface().get_edited_scene_root()
+	
+	edge_preview.show()
+	var immediate_mesh = edge_preview.mesh as ImmediateMesh
+	immediate_mesh.clear_surfaces()
+	
+	immediate_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	immediate_mesh.surface_add_vertex(edge[0])
+	immediate_mesh.surface_add_vertex(edge[1])
+	immediate_mesh.surface_end()
+
+
+func _convert_box_to_CSGMesh(box: CSGBox3D) -> CSGMesh3D:
+	var csg_mesh = CSGMesh3D.new()
+	var arr_mesh = ArrayMesh.new()
+	var vertices = PackedVector3Array()
+	var indices = PackedInt32Array()
+	var half_size = box.size * 0.5
+	
+	var local_verts = [
+		Vector3(-half_size.x, -half_size.y, -half_size.z),  # 0
+		Vector3(half_size.x, -half_size.y, -half_size.z),   # 1
+		Vector3(half_size.x, half_size.y, -half_size.z),    # 2
+		Vector3(-half_size.x, half_size.y, -half_size.z),   # 3
+		Vector3(-half_size.x, -half_size.y, half_size.z),   # 4
+		Vector3(half_size.x, -half_size.y, half_size.z),    # 5
+		Vector3(half_size.x, half_size.y, half_size.z),     # 6
+		Vector3(-half_size.x, half_size.y, half_size.z)     # 7
+	]
+	
+	vertices.append_array(local_verts)
+	
+	var faces = [
+		[0, 1, 2, 2, 3, 0],  # Front
+		[1, 5, 6, 6, 2, 1],  # Right
+		[5, 4, 7, 7, 6, 5],  # Back
+		[4, 0, 3, 3, 7, 4],  # Left
+		[3, 2, 6, 6, 7, 3],  # Top
+		[4, 5, 1, 1, 0, 4]   # Bottom
+	]
+	
+	for face in faces:
+		indices.append_array(face)
+	
+	var arrays = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_INDEX] = indices
+	
+	arr_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	
+	csg_mesh.mesh = arr_mesh
+	csg_mesh.transform = box.transform
+	csg_mesh.operation = box.operation
+	csg_mesh.use_collision = box.use_collision
+	
+	voxel_root.add_child(csg_mesh)
+	csg_mesh.owner = get_editor_interface().get_edited_scene_root()
+	
+	box.queue_free()
+	
+	return csg_mesh

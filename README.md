@@ -37,18 +37,18 @@ User can extrude cubes by:
 4. Moving the mouse to set the desired extrusion depth.
 5. Clicking once more to finalize the extrusion.
 
-![Extrude_example](.github/images/extrude_example.png)
+![Extrude_example](.github/images/extrude_cut.gif)
 Depending on the extrusion direction:
 - Extrusion along the surface normal adds geometry.
 - Extrusion in the opposite direction removes geometry.
 
-### Example of a cut operation:
-![Cut_example](.github/images/extrude_example_2.png)
-### Result of the cut operation:
-![Cut_result](.github/images/cut_result.png)
-
 ## Plane movement
 The drawing plane can be snapped to a face by pressing the X key while the mouse is over the face.
-![Plane_movement](.github/images/plane_example.png)
-You can reset the plane's transform by selecting Reset Grid on the toolbar.
+![Plane_movement](.github/images/plane_movement.gif)
+You can reset the plane's transform by selecting Reset Grid on the toolbar or by pressing Z.
+
+## Edge movement
+Edges can be moved by using the Select Edge tool
+![Edge_movement](.github/images/edge_movement.gif)
+
 

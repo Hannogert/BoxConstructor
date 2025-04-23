@@ -1,6 +1,7 @@
 @tool
 extends PanelContainer
 
+signal disable_button_pressed
 signal select_button_pressed
 signal add_button_pressed
 signal remove_button_pressed
@@ -9,8 +10,10 @@ signal grid_size_changed(size: int)
 signal reset_grid_pressed
 signal merge_mesh
 
+var disable_button: Button
 var merge_button: Button
 var edit_button: Button
+var tooltip_button: Button
 var plugin: EditorPlugin
 var toolbar_buttons: HBoxContainer
 var select_button: Button
@@ -24,10 +27,17 @@ func _ready() -> void:
 	_configure_style()
 	_create_containers()
 	_create_active_button_style()
-	_create_buttons()
+	_create_all_buttons()
+
+func _create_all_buttons() -> void:
+	disable_button = _create_mode_button("Disable", "GuiClose", "_on_disable_pressed")
+	select_button = _create_mode_button("Select Edge", "ToolSelect", "_on_select_button_pressed")
+	add_button = _create_mode_button("Add Primitive", "Add", "_on_add_button_pressed")
+	_create_button("Reset Grid", "Reload", "_on_reset_button_pressed")
 	_create_grid_size_selector()
 	merge_button = _create_button("Merge Mesh", "BoxMesh", "_on_merge_mesh_pressed")
 	edit_button = _create_button("Edit Mesh", "Edit", "_on_edit_pressed")
+	tooltip_button = _create_button("", "Help", "pass")
 
 func _configure_style() -> void:
 	var stylebox = StyleBoxFlat.new()
@@ -59,7 +69,8 @@ func _create_active_button_style() -> void:
 	active_button_stylebox.border_color = Color.WHITE
 
 func _create_buttons() -> void:
-	select_button = _create_mode_button("Select", "ToolSelect", "_on_select_button_pressed")
+	disable_button = _create_mode_button("Disable", "GuiVisibilityHidden", "_on_disable_pressed")
+	select_button = _create_mode_button("Select Edge", "ToolSelect", "_on_select_button_pressed")
 	add_button = _create_mode_button("Add Primitive", "Add", "_on_add_button_pressed")
 	_create_button("Reset Grid", "Reload", "_on_reset_button_pressed")
 
@@ -68,6 +79,8 @@ func set_edit_button_enabled(enabled: bool) -> void:
 		edit_button.disabled = not enabled
 
 func update_button_states(is_merged: bool) -> void:
+	if select_button:
+		select_button.disabled = is_merged
 	if add_button:
 		add_button.disabled = is_merged
 	if merge_button:
@@ -75,7 +88,6 @@ func update_button_states(is_merged: bool) -> void:
 	if edit_button:
 		edit_button.disabled = not is_merged
 	
-	# Force buttons to redraw
 	if add_button:
 		add_button.queue_redraw()
 	if merge_button:
@@ -93,6 +105,7 @@ func _create_mode_button(text: String, icon_name: String, callback: String) -> B
 	var normal_style = _create_button_stylebox()
 	var hover_style = _create_button_stylebox(true)
 	
+	button.tooltip_text = _get_tooltip_text(button.text)
 	button.add_theme_stylebox_override("normal", normal_style)
 	button.add_theme_stylebox_override("hover", hover_style)
 	button.add_theme_stylebox_override("pressed", active_button_stylebox)
@@ -111,6 +124,7 @@ func _create_button(text: String, icon_name: String, callback: String) -> Button
 	var normal_style = _create_button_stylebox()
 	var hover_style = _create_button_stylebox(true)
 	
+	button.tooltip_text = _get_tooltip_text(button.text)
 	button.add_theme_stylebox_override("normal", normal_style)
 	button.add_theme_stylebox_override("hover", hover_style)
 	button.add_theme_stylebox_override("pressed", hover_style)
@@ -141,11 +155,11 @@ func _create_grid_size_selector() -> void:
 	var grid_size_button = OptionButton.new()
 	grid_size_button.name = "Grid Size"
 	
-	grid_size_button.add_item("Auto", 0) # Auto mode
+	grid_size_button.add_item("Auto", 0)
 	grid_size_button.add_item("1", 1)
 	grid_size_button.add_item("10", 10)
 	grid_size_button.add_item("100", 100)
-	grid_size_button.add_item("1000", 1000)
+	#grid_size_button.add_item("1000", 1000)
 
 	grid_size_button.connect("item_selected", Callable(self, "_on_grid_size_selected"))
 	grid_size_button.add_theme_stylebox_override("normal", _create_button_stylebox())
@@ -154,19 +168,21 @@ func _create_grid_size_selector() -> void:
 	toolbar_buttons.add_child(grid_size_button)
 
 func set_active_mode(mode: int) -> void:
-	select_button.button_pressed = (mode == 0) # SELECT mode
-	add_button.button_pressed = (mode == 1) # ADD mode
+	disable_button.button_pressed = (mode == 0) # DISABLE mode
+	select_button.button_pressed = (mode == 1) # SELECT mode
+	add_button.button_pressed = (mode == 2) # ADD mode
+
+
+func _on_disable_pressed() -> void:
+	emit_signal("disable_button_pressed")
 
 func _on_select_button_pressed() -> void:
-	#print("Select Button Pressed")
 	emit_signal("select_button_pressed")
 
 func _on_add_button_pressed() -> void:
-	#print("Add Button Pressed")
 	emit_signal("add_button_pressed")
 
 func _on_remove_button_pressed() -> void:
-	#print("Remove Button Pressed")
 	emit_signal("remove_button_pressed")
 
 func _on_grid_size_selected(index: int) -> void:
@@ -175,14 +191,43 @@ func _on_grid_size_selected(index: int) -> void:
 	emit_signal("grid_size_changed", id)
 
 func _on_reset_button_pressed() -> void:
-	#print("Reset Grid Button Pressed")
 	emit_signal("reset_grid_pressed")
 
 func _on_merge_mesh_pressed() -> void:
-	#print("Merge Mesh Button Pressed")
 	emit_signal("merge_mesh")
 
 func _on_edit_pressed() -> void:
-	#print("Edit button pressed")
 	update_button_states(false)
 	emit_signal("edit_mesh")
+
+func _get_tooltip_text(button_name: String) -> String:
+	match button_name:
+		"Disable":
+			return "Disable\n Disables mouse input for Constructor."
+		"Select Edge":
+			return "Select Edge\n Allows you to select an edge to move it."
+		"Add Primitive":
+			return "Add Primitive\n Allows you to add or remove a box by drawing a rectangle and extruding it."
+		"Reset Grid":
+			return "Reset\n Resets the grid to its original state."
+		"Grid Size":
+			return "Grid Size\n Sets the size of the grid."
+		"Merge Mesh":
+			return "Merge Mesh\n Merges all the cubes into a single MeshInstance3D."
+		"Edit Mesh":
+			return "Edit Mesh\n Breaks the mesh into its original cubes."
+		"":
+			return """Box Constructor Help:
+		
+		Keyboard Shortcuts:
+		- Press X to move the drawing plane.
+		- Press Z key to reset the drawing plane.
+		- Middle mouse will cancel the current operation for extrudsion and drawing.
+
+		Tips:
+		- You can use the edge select to move edges, but only use them to create ramps
+		(Creating other shapes may result in CSG operations not working correctly).
+		- The drawing does not work on slanted surfaces, only flat surfaces.
+		"""
+		_:
+			return ""
