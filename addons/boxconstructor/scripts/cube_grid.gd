@@ -1,15 +1,17 @@
 @tool
 extends StaticBody3D
 class_name CubeGrid3D
-@export var grid_scale: float = 0.0:
+var grid_scale: float = 1:
 	set(value):
 		grid_scale = value
 		_update_material()
+		emit_signal("grid_created", grid_scale)
 
 
 var mesh_instance: MeshInstance3D
 var grid_material: ShaderMaterial
 var voxel_root: CSGCombiner3D
+signal grid_created(scale: float)
 
 func _enter_tree() -> void:
 	if Engine.is_editor_hint():
@@ -39,8 +41,8 @@ func _enter_tree() -> void:
 		add_child(voxel_root)
 		
 		if Engine.is_editor_hint():
-			mesh_instance.owner = get_tree().edited_scene_root
-			collision_shape.owner = get_tree().edited_scene_root
+			mesh_instance.owner = null #get_tree().edited_scene_root
+			collision_shape.owner = null #get_tree().edited_scene_root
 			voxel_root.owner = get_tree().edited_scene_root
 	
 	else:
@@ -56,6 +58,7 @@ func _enter_tree() -> void:
 				voxel_root.owner = get_tree().edited_scene_root
 	
 	_setup_shader()
+	emit_signal("grid_created", grid_scale)
 
 func _setup_shader() -> void:
 	if not mesh_instance:
@@ -68,22 +71,8 @@ func _setup_shader() -> void:
 		var base_material = preload("res://addons/boxconstructor/textures/cube_grid.tres")
 		grid_material = base_material.duplicate()
 		mesh_instance.material_override = grid_material
-		
-		grid_material.set_shader_parameter("grid_scale", 1000.0)
-		if grid_scale == 0 and Engine.is_editor_hint():
-			var editor_plugin = EditorPlugin.new()
-			var editor_viewport = editor_plugin.get_editor_interface().get_editor_viewport_3d()
-			if editor_viewport:
-				var camera = editor_viewport.get_camera_3d()
-				if camera:
-					var y_distance = abs(camera.global_position.y - global_position.y)
-					grid_material.set_shader_parameter("camera_distance", y_distance)
+		grid_material.set_shader_parameter("grid_scale", grid_scale)
 
 func _update_material() -> void:
-	if grid_material:
-		if grid_scale == 0:
-			grid_material.set_shader_parameter("grid_scale", 5000.0)
-		else:
-			grid_material.set_shader_parameter("grid_scale", grid_scale)
-			grid_material.set_shader_parameter("camera_distance", grid_scale)
+		grid_material.set_shader_parameter("grid_scale", grid_scale)
 

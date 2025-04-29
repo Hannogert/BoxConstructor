@@ -8,13 +8,17 @@ enum BuildMode {
 	ADD
 }
 
-const DISTANCE_THRESHOLD_SMALL = 50.0
-const DISTANCE_THRESHOLD_MEDIUM = 500.0
-#const DISTANCE_THRESHOLD_LARGE = 5000.0
-const GRID_SCALE_SMALL = 10.0
-const GRID_SCALE_MEDIUM = 100.0
-#const GRID_SCALE_LARGE = 1000.0
-const BASE_PREVIEW_THICKNESS = 0.02
+
+const GRID_SCALE_1 = 0.01
+const GRID_SCALE_2 = 0.1
+const GRID_SCALE_3 = 0.25
+const GRID_SCALE_4 = 0.5
+const GRID_SCALE_5 = 0.75
+const GRID_SCALE_6 = 1
+const GRID_SCALE_7 = 2
+const GRID_SCALE_8 = 5
+const GRID_SCALE_9 = 10
+const BASE_PREVIEW_THICKNESS = 0.05
 
 # === Editor properties ===
 var current_mode: BuildMode = BuildMode.SELECT
@@ -43,6 +47,10 @@ var extrude_distance: float = 0.0
 var initial_extrude_point: Vector3
 var extrude_line_start: Vector3
 var extrude_line_end: Vector3
+
+# === Highlight properties ===
+var hover_preview: MeshInstance3D = null
+var hover_point: Vector3 = Vector3.ZERO
 
 # === Edge Movement properties ===
 var edge_preview: MeshInstance3D = null
@@ -78,21 +86,8 @@ func _exit_tree() -> void:
 		get_editor_interface().get_selection().selection_changed.disconnect(_on_selection_changed)
 
 func _process(_delta: float) -> void:
-	# Here we change the grid scale based on the distance to the camera (y-axis)
-	if selected_grid:
-		if camera and selected_grid.grid_material:
-			if selected_grid.grid_scale == 0:
-				var distance = abs(camera.global_position.y - selected_grid.global_position.y)
-				selected_grid.grid_material.set_shader_parameter("camera_distance", distance)
-				# Set the grid scale based on the distance
-				#if distance > DISTANCE_THRESHOLD_LARGE:
-				#	selected_grid.grid_material.set_shader_parameter("grid_scale", GRID_SCALE_LARGE)
-				if distance > DISTANCE_THRESHOLD_MEDIUM:
-					selected_grid.grid_material.set_shader_parameter("grid_scale", GRID_SCALE_MEDIUM)
-				elif distance > DISTANCE_THRESHOLD_SMALL:
-					selected_grid.grid_material.set_shader_parameter("grid_scale", GRID_SCALE_SMALL)
-				else:
-					selected_grid.grid_material.set_shader_parameter("grid_scale", 1.0)
+	pass
+	
 
 func _input(event: InputEvent) -> void:
 	if not selected_grid or not selected_grid.is_inside_tree():
@@ -107,7 +102,6 @@ func _input(event: InputEvent) -> void:
 		ray_query.collide_with_bodies = true
 		var hit = get_editor_interface().get_edited_scene_root().get_world_3d().direct_space_state.intersect_ray(ray_query)
 		if hit:
-			#print("Hit position: ", hit.position)
 			var snapped_pos = _snap_to_grid(hit.position)
 			_align_grid_to_normal(hit.normal, snapped_pos)
 	if event is InputEventKey  and event.pressed and event.keycode == KEY_Z:
@@ -232,6 +226,11 @@ func _input(event: InputEvent) -> void:
 	# Handle Rectangle Drawing and Extrusion Logic
 	if current_mode == BuildMode.ADD:
 		if event is InputEventMouseButton:
+			if toolbar and toolbar.get_global_rect().has_point(event.position):
+				return
+			# var viewport_rect = editor_viewport.get_viewport().get_visible_rect()
+			# if not viewport_rect.has_point(event.position):
+			# 	return
 			if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 				if not camera: return
 
@@ -289,6 +288,25 @@ func _input(event: InputEvent) -> void:
 
 		# Update section		
 		elif event is InputEventMouseMotion:
+			if current_mode == BuildMode.ADD:
+				#pass
+				if not is_drawing:
+					if not camera: return
+					
+					var ray_query = PhysicsRayQueryParameters3D.new()
+					ray_query.from = camera.project_ray_origin(editor_viewport.get_mouse_position())
+					ray_query.to = ray_query.from + camera.project_ray_normal(editor_viewport.get_mouse_position()) * 1000
+					ray_query.collide_with_bodies = true
+					
+					var hit = get_editor_interface().get_edited_scene_root().get_world_3d().direct_space_state.intersect_ray(ray_query)
+					if hit:
+						hover_point = _snap_to_grid(hit.position)
+						if not hover_preview:
+							_create_hover_preview()
+						_update_hover_preview()
+					elif hover_preview:
+						hover_preview.queue_free()
+
 			if is_drawing and not is_extruding:
 				if not camera: return
 				
@@ -319,18 +337,7 @@ func _input(event: InputEvent) -> void:
 					var projected_point = extrude_line_start + line_dir * projected_dist
 					var raw_distance = (projected_point - initial_extrude_point).dot(draw_normal)
 					
-					var grid_unit = 1.0
-					if selected_grid.grid_scale > 0:
-						grid_unit = selected_grid.grid_scale
-					else:
-						if camera:
-							var distance = camera.global_position.distance_to(initial_extrude_point)
-							if distance > DISTANCE_THRESHOLD_SMALL:
-								grid_unit = GRID_SCALE_SMALL
-							if distance > DISTANCE_THRESHOLD_MEDIUM:
-								grid_unit = GRID_SCALE_MEDIUM
-							#if distance > DISTANCE_THRESHOLD_LARGE:
-							#	grid_unit = GRID_SCALE_LARGE
+					var grid_unit = selected_grid.grid_scale
 					
 					var new_distance = round(raw_distance / grid_unit) * grid_unit
 					
@@ -340,33 +347,22 @@ func _input(event: InputEvent) -> void:
 
 
 # === Grid Methods ===
-func _on_grid_size_changed(size: int) -> void:
-	# Update the grid material
-	var selected = get_editor_interface().get_selection().get_selected_nodes()
-	if selected.size() > 0 and selected[0] is CubeGrid3D:
-		selected[0].grid_scale = size
-		selected[0]._update_material()
+func _on_grid_size_changed(size: float) -> void:
+	if selected_grid and selected_grid.grid_material:
+		selected_grid.grid_scale = size
+		selected_grid.grid_material.set_shader_parameter("grid_scale", size)
+
+		if hover_preview:
+			hover_preview.queue_free()
+			hover_preview = null
+
+
 	
 func _snap_to_grid(pos: Vector3) -> Vector3:
 	if not selected_grid:
 		return pos
 
-	# Default smallest unit
-	var grid_unit = 1.0
-
-	# If we have set our own grid scale use that for snapping
-	if selected_grid.grid_scale > 0:
-		grid_unit = selected_grid.grid_scale
-	else:
-		# Dynamically set the snap
-		if camera:
-			var distance = camera.global_position.distance_to(pos)
-			if distance > DISTANCE_THRESHOLD_SMALL:
-				grid_unit = GRID_SCALE_SMALL
-			if distance > DISTANCE_THRESHOLD_MEDIUM:
-				grid_unit = GRID_SCALE_MEDIUM
-			#if distance > DISTANCE_THRESHOLD_LARGE:
-			#	grid_unit = GRID_SCALE_LARGE
+	var grid_unit = selected_grid.grid_scale
 	
 	return Vector3(
 		round(pos.x / grid_unit) * grid_unit,
@@ -435,26 +431,39 @@ func _reset_grid_transform() -> void:
 		selected_grid._update_material()
 
 # === Drawing Methods ===
+func _create_hover_preview() -> void:
+	if hover_preview:
+		hover_preview.queue_free()
+
+	hover_preview = MeshInstance3D.new()
+	var sphere = SphereMesh.new()
+	var scale = selected_grid.grid_scale * BASE_PREVIEW_THICKNESS
+	sphere.radius = scale
+	sphere.height = scale * 2
+	hover_preview.mesh = sphere
+
+	var material = StandardMaterial3D.new()
+	material.albedo_color = Color.RED
+	material.no_depth_test = true
+	hover_preview.material_override = material
+
+	if voxel_root:
+		voxel_root.add_child(hover_preview)
+		hover_preview.position = hover_point
+		#hover_preview.owner = voxel_root
+		
+
+func _update_hover_preview() -> void:
+	if not hover_preview:
+		return
+	hover_preview.global_position = hover_point
+
 func _calculate_base_rect_points() -> void:
 	if not selected_grid:
 		return
 		
-	# Get the grid unit size	
-	var grid_unit = 1.0 
-	if selected_grid.grid_scale != 0:
-		grid_unit = selected_grid.grid_scale
-		if grid_unit == 1.0:
-			grid_unit = 0.1
-	else:
-		if camera:
-			var distance = camera.global_position.distance_to(draw_start)
-			if distance > DISTANCE_THRESHOLD_SMALL:
-				grid_unit = GRID_SCALE_SMALL
-			if distance > DISTANCE_THRESHOLD_MEDIUM:
-				grid_unit = GRID_SCALE_MEDIUM
-			#if distance > DISTANCE_THRESHOLD_LARGE:
-			#	grid_unit = GRID_SCALE_LARGE
-	
+	var grid_unit = selected_grid.grid_scale
+
 	# Calculate the base rectangle points
 	var min_x = floor(min(draw_start.x, draw_end.x) / grid_unit) * grid_unit
 	var max_x = ceil(max(draw_start.x, draw_end.x) / grid_unit) * grid_unit
@@ -500,6 +509,7 @@ func create_rectangle_preview() -> void:
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.no_depth_test = true
 	draw_preview.material_override = material
 	
 	if voxel_root:
@@ -511,24 +521,14 @@ func _update_rectangle_preview() -> void:
 	var immediate_mesh = draw_preview.mesh as ImmediateMesh
 	immediate_mesh.clear_surfaces()
 	
-	var base_thickness = BASE_PREVIEW_THICKNESS
+	var base_thickness = BASE_PREVIEW_THICKNESS * selected_grid.grid_scale
 	var thickness = base_thickness
-	var grid_unit = 1.0
-	
-	# Scale the thickness of the lines based on the distance of the camera
-	if camera:
-		var distance = camera.global_position.distance_to(draw_start)
-		if distance > DISTANCE_THRESHOLD_SMALL:
-			thickness = base_thickness * 10.0
-			grid_unit = GRID_SCALE_SMALL
-		if distance > DISTANCE_THRESHOLD_MEDIUM:
-			thickness = base_thickness * 20.0
-			grid_unit = GRID_SCALE_MEDIUM
-		#if distance > DISTANCE_THRESHOLD_LARGE:
-		#	thickness = base_thickness * 30.0
-		#	grid_unit = GRID_SCALE_LARGE
-			
-	var preview_offset = draw_normal * (grid_unit * 0.01)
+	var grid_unit = selected_grid.grid_scale
+	var material = draw_preview.material_override as StandardMaterial3D
+
+	if is_extruding:
+		material.albedo_color = Color.GREEN if extrude_distance >= 0 else Color.RED
+	var preview_offset = draw_normal * (grid_unit * 0.000001)
 	immediate_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
 	
 	var preview_points = []
@@ -662,6 +662,7 @@ func _create_CSGBox3D() -> void:
 
 	voxel_root.add_child(new_voxel)
 	new_voxel.owner = get_editor_interface().get_edited_scene_root()
+	_update_toolbar_states()
 
 func _on_merge_mesh() -> void:
 	if not voxel_root or voxel_root.get_child_count() == 0:
@@ -821,7 +822,7 @@ func _convert_to_voxels() -> void:
 func _connect_toolbar_signals() -> void:
 	toolbar.select_button_pressed.connect(func(): _change_mode(BuildMode.SELECT))
 	toolbar.add_button_pressed.connect(func(): _change_mode(BuildMode.ADD))
-	toolbar.disable_button_pressed.connect(func(): _change_mode(BuildMode.DISABLE))  # Add this line
+	toolbar.disable_button_pressed.connect(func(): _change_mode(BuildMode.DISABLE))
 	toolbar.grid_size_changed.connect(_on_grid_size_changed)
 	toolbar.reset_grid_pressed.connect(_reset_grid_transform)
 	toolbar.merge_mesh.connect(_on_merge_mesh)
@@ -835,14 +836,17 @@ func _update_toolbar_states() -> void:
 	var has_csg_boxes = false
 	
 	for child in voxel_root.get_children():
-		if child is CSGBox3D:
+		if child is CSGBox3D or child is CSGMesh3D:
 			has_csg_boxes = true
 			break
 			
 	if has_voxel_mesh:
-		toolbar.update_button_states(true) 
+		toolbar.update_button_states(true)
 	else:
 		toolbar.update_button_states(false)
+	
+	toolbar.set_merge_button_enabled(has_csg_boxes)
+	toolbar.set_select_button_enabled(has_csg_boxes)
 	toolbar.set_edit_button_enabled(has_voxel_mesh)
 
 func _on_selection_changed() -> void:
@@ -851,8 +855,16 @@ func _on_selection_changed() -> void:
 		selected_grid = selected[0]
 		voxel_root = selected_grid.get_node("CSGCombiner3D")
 		toolbar.show()
+		toolbar.connect_to_grid(selected_grid)
 		_update_toolbar_states()
+
+		if hover_preview:
+			hover_preview.queue_free()
+			hover_preview = null
 	else:
+		if hover_preview:
+			hover_preview.queue_free()
+			hover_preview = null
 		selected_grid = null
 		voxel_root = null
 		toolbar.hide()
@@ -974,6 +986,7 @@ func _create_edge_preview(edge: Array) -> void:
 		
 	if not edge_preview:
 		edge_preview = MeshInstance3D.new()
+		edge_preview.top_level = true
 		var immediate_mesh = ImmediateMesh.new()
 		edge_preview.mesh = immediate_mesh
 		
@@ -981,19 +994,19 @@ func _create_edge_preview(edge: Array) -> void:
 		material.albedo_color = Color(1.0, 0.0, 0.0, 1.0)
 		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		material.no_depth_test = true
 		edge_preview.material_override = material
 		
 		if voxel_root:
 			voxel_root.add_child(edge_preview)
-			edge_preview.owner = get_editor_interface().get_edited_scene_root()
 	
 	edge_preview.show()
 	var immediate_mesh = edge_preview.mesh as ImmediateMesh
 	immediate_mesh.clear_surfaces()
 	
-	immediate_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
-	immediate_mesh.surface_add_vertex(edge[0])
-	immediate_mesh.surface_add_vertex(edge[1])
+	immediate_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	var thickness = selected_grid.grid_scale * BASE_PREVIEW_THICKNESS
+	add_thick_line(immediate_mesh, edge[0], edge[1], thickness)
 	immediate_mesh.surface_end()
 
 

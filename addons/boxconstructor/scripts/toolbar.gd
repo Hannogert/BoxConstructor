@@ -6,7 +6,7 @@ signal select_button_pressed
 signal add_button_pressed
 signal remove_button_pressed
 signal edit_mesh
-signal grid_size_changed(size: int)
+signal grid_size_changed(size: float)
 signal reset_grid_pressed
 signal merge_mesh
 
@@ -19,6 +19,7 @@ var toolbar_buttons: HBoxContainer
 var select_button: Button
 var add_button: Button
 var active_button_stylebox: StyleBoxFlat
+var grid_sizes = [0.01, 0.1, 0.25, 0.5, 0.75, 1, 2, 5, 10]
 
 func _init(p_plugin: EditorPlugin) -> void:
 	plugin = p_plugin
@@ -78,15 +79,24 @@ func set_edit_button_enabled(enabled: bool) -> void:
 	if edit_button:
 		edit_button.disabled = not enabled
 
-func update_button_states(is_merged: bool) -> void:
-	if select_button:
-		select_button.disabled = is_merged
-	if add_button:
-		add_button.disabled = is_merged
+func set_merge_button_enabled(enabled: bool) -> void:
 	if merge_button:
-		merge_button.disabled = is_merged
+		merge_button.disabled = not enabled
+
+func set_select_button_enabled(enabled: bool) -> void:
+	if select_button:
+		select_button.disabled = not enabled
+		
+func update_button_states(is_merged: bool) -> void:
+	
+	if select_button:
+		select_button.visible = !is_merged
+	if add_button:
+		add_button.visible = !is_merged
+	if merge_button:
+		merge_button.visible = !is_merged
 	if edit_button:
-		edit_button.disabled = not is_merged
+		edit_button.visible = is_merged
 	
 	if add_button:
 		add_button.queue_redraw()
@@ -94,7 +104,16 @@ func update_button_states(is_merged: bool) -> void:
 		merge_button.queue_redraw()
 	if edit_button:
 		edit_button.queue_redraw()
-	
+
+	toolbar_buttons.custom_minimum_size = Vector2.ZERO
+	toolbar_buttons.reset_size()
+	custom_minimum_size = Vector2.ZERO
+	reset_size()
+
+	var viewport_base = get_parent()
+	if viewport_base:
+		position.x = (viewport_base.size.x - size.x) * 0.5 
+
 func _create_mode_button(text: String, icon_name: String, callback: String) -> Button:
 	var button = Button.new()
 	button.text = text
@@ -155,11 +174,17 @@ func _create_grid_size_selector() -> void:
 	var grid_size_button = OptionButton.new()
 	grid_size_button.name = "Grid Size"
 	
-	grid_size_button.add_item("Auto", 0)
-	grid_size_button.add_item("1", 1)
-	grid_size_button.add_item("10", 10)
-	grid_size_button.add_item("100", 100)
-	#grid_size_button.add_item("1000", 1000)
+	grid_size_button.add_item("0.01", 0)
+	grid_size_button.add_item("0.1", 1)
+	grid_size_button.add_item("0.25", 2)
+	grid_size_button.add_item("0.5", 3)
+	grid_size_button.add_item("0.75", 4)
+	grid_size_button.add_item("1", 5)
+	grid_size_button.add_item("2", 6)
+	grid_size_button.add_item("5", 7)
+	grid_size_button.add_item("10", 8)
+
+	grid_size_button.select(5)
 
 	grid_size_button.connect("item_selected", Callable(self, "_on_grid_size_selected"))
 	grid_size_button.add_theme_stylebox_override("normal", _create_button_stylebox())
@@ -172,6 +197,24 @@ func set_active_mode(mode: int) -> void:
 	select_button.button_pressed = (mode == 1) # SELECT mode
 	add_button.button_pressed = (mode == 2) # ADD mode
 
+func connect_to_grid(grid: CubeGrid3D) -> void:
+	var grid_size_button = toolbar_buttons.get_node("Grid Size") as OptionButton
+	if not grid_size_button:
+		return
+		
+	var grid_sizes = [0.01, 0.1, 0.25, 0.5, 0.75, 1, 2, 5, 10]
+	var index = grid_sizes.find(grid.grid_scale)
+	if index != -1:
+		grid_size_button.select(index)
+
+func _on_grid_created(initial_scale: float) -> void:
+	var grid_size_button = toolbar_buttons.get_node("Grid Size") as OptionButton
+	if not grid_size_button:
+		return
+		
+	var index = grid_sizes.find(initial_scale)
+	if index != -1:
+		grid_size_button.select(index)
 
 func _on_disable_pressed() -> void:
 	emit_signal("disable_button_pressed")
@@ -186,9 +229,8 @@ func _on_remove_button_pressed() -> void:
 	emit_signal("remove_button_pressed")
 
 func _on_grid_size_selected(index: int) -> void:
-	var grid_size_button = toolbar_buttons.get_node("Grid Size")
-	var id = grid_size_button.get_item_id(index)
-	emit_signal("grid_size_changed", id)
+	var selected_size = grid_sizes[index]
+	emit_signal("grid_size_changed", selected_size)
 
 func _on_reset_button_pressed() -> void:
 	emit_signal("reset_grid_pressed")
