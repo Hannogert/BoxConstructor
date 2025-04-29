@@ -13,3 +13,11 @@ export_presets.cfg
 .mono/
 data_*/
 mono_crash.*.json
+
+
+# Exclude files not needed for AssetLib
+.github/               export-ignore
+/.gitattributes        export-ignore
+/.gitignore            export-ignore
+/LICENSE               export-ignore
+/README.md             export-ignore
