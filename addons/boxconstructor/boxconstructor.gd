@@ -102,22 +102,22 @@ func _input(event: InputEvent) -> void:
 
 	# Uncomment this BLOCK to DISABLE auto KEYBOARD PRESS TO ENTER MOVE MODE
 	# ==========================================================
-	if event is InputEventMouseMotion:
-		var viewport_container = editor_viewport.get_parent()
-		if viewport_container and viewport_container is SubViewportContainer:
-			var viewport_rect = viewport_container.get_global_rect()
-			var current_in_viewport = viewport_rect.has_point(event.position)
-			
-			# Only trigger when viewport state changes
-			if current_in_viewport != is_mouse_in_viewport:
-				if current_in_viewport:
-					# Mouse entered viewport
-					get_editor_interface().set_main_screen_editor("3D")
-					await get_tree().process_frame
-					simulate_keypress()
-				
-				# Update tracking state
-				is_mouse_in_viewport = current_in_viewport
+	#if event is InputEventMouseMotion:
+	#	var viewport_container = editor_viewport.get_parent()
+	#	if viewport_container and viewport_container is SubViewportContainer:
+	#		var viewport_rect = viewport_container.get_global_rect()
+	#		var current_in_viewport = viewport_rect.has_point(event.position)
+	#		
+	#		# Only trigger when viewport state changes
+	#		if current_in_viewport != is_mouse_in_viewport:
+	#			if current_in_viewport:
+	#				# Mouse entered viewport
+	#				get_editor_interface().set_main_screen_editor("3D")
+	#				await get_tree().process_frame
+	#				simulate_keypress()
+	#			
+	#			# Update tracking state
+	#			is_mouse_in_viewport = current_in_viewport
 	# ==========================================================
 
 	# Handles all the input events for the plugin
@@ -189,7 +189,7 @@ func _input(event: InputEvent) -> void:
 				
 						var local_edge = [
 							dragged_mesh.to_local(current_edge[0]),
-    						dragged_mesh.to_local(current_edge[1])
+							dragged_mesh.to_local(current_edge[1])
 						]
 						var local_offset = dragged_mesh.global_transform.basis.inverse() * offset
 						var new_vertices = PackedVector3Array()
@@ -218,7 +218,7 @@ func _input(event: InputEvent) -> void:
 						]
 						drag_start_offset = snapped_pos
 			
-            
+			
 			
 			# Highlight the Edge
 			elif not is_dragging_edge:
