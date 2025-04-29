@@ -61,6 +61,8 @@ var drag_start_position: Vector3
 var drag_plane: Plane
 var drag_start_offset: Vector3
 
+var is_mouse_in_viewport: bool = false
+
 
 # === Lifecycle Methods ===
 func _enter_tree() -> void:
@@ -87,11 +89,37 @@ func _exit_tree() -> void:
 
 func _process(_delta: float) -> void:
 	pass
-	
+
+func simulate_keypress():
+	var a = InputEventKey.new()
+	a.keycode = KEY_W
+	a.pressed = true
+	Input.parse_input_event(a)
 
 func _input(event: InputEvent) -> void:
 	if not selected_grid or not selected_grid.is_inside_tree():
 		return
+
+	# Uncomment this BLOCK to DISABLE auto KEYBOARD PRESS TO ENTER MOVE MODE
+	# ==========================================================
+	if event is InputEventMouseMotion:
+		var viewport_container = editor_viewport.get_parent()
+		if viewport_container and viewport_container is SubViewportContainer:
+			var viewport_rect = viewport_container.get_global_rect()
+			var current_in_viewport = viewport_rect.has_point(event.position)
+			
+			# Only trigger when viewport state changes
+			if current_in_viewport != is_mouse_in_viewport:
+				if current_in_viewport:
+					# Mouse entered viewport
+					get_editor_interface().set_main_screen_editor("3D")
+					await get_tree().process_frame
+					simulate_keypress()
+				
+				# Update tracking state
+				is_mouse_in_viewport = current_in_viewport
+	# ==========================================================
+
 	# Handles all the input events for the plugin
 	if event is InputEventKey and event.pressed and event.keycode == KEY_X:
 		if not camera or not selected_grid:
@@ -106,6 +134,7 @@ func _input(event: InputEvent) -> void:
 			_align_grid_to_normal(hit.normal, snapped_pos)
 	if event is InputEventKey  and event.pressed and event.keycode == KEY_Z:
 		_reset_grid_transform()
+		
 	# Handle Edge Movement Logic
 	if current_mode == BuildMode.SELECT:
 		if event is InputEventMouseButton:
@@ -228,18 +257,27 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventMouseButton:
 			if toolbar and toolbar.get_global_rect().has_point(event.position):
 				return
-			# var viewport_rect = editor_viewport.get_viewport().get_visible_rect()
-			# if not viewport_rect.has_point(event.position):
-			# 	return
-			if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-				if not camera: return
 
-				# Draw the base rectangle
-				if not is_drawing:
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				if event.pressed:
+					if not camera: return
+					
+					# Handle extrusion completion first
+					if is_extruding and has_started_extrusion:
+						# Create the box when clicking during extrusion
+						_create_CSGBox3D()
+						is_drawing = false
+						is_extruding = false 
+						has_started_extrusion = false
+						if draw_preview:
+							draw_preview.queue_free()
+							draw_preview = null
+						return
+					
+					# Start dragging the base rectangle
 					var ray_query = PhysicsRayQueryParameters3D.new()
 					ray_query.from = camera.project_ray_origin(editor_viewport.get_mouse_position())
 					ray_query.to = ray_query.from + camera.project_ray_normal(editor_viewport.get_mouse_position()) * 1000
-					ray_query.collide_with_bodies = true
 					
 					var hit = get_editor_interface().get_edited_scene_root().get_world_3d().direct_space_state.intersect_ray(ray_query)
 					if hit:
@@ -250,34 +288,24 @@ func _input(event: InputEvent) -> void:
 						draw_plane = Plane(draw_normal, hit.position.dot(draw_normal))
 						create_rectangle_preview()
 						_calculate_base_rect_points()
-
-				# Start extruding the rectangle
-				elif not is_extruding:
-					is_extruding = true
-					has_started_extrusion = false
-					extrude_distance = 0.0
-					
-					var from = camera.project_ray_origin(editor_viewport.get_mouse_position())
-					var dir = camera.project_ray_normal(editor_viewport.get_mouse_position())
-					var intersection = draw_plane.intersects_ray(from, dir)
-					
-					if intersection:
-						initial_extrude_point = _snap_to_grid(intersection)
-						extrude_line_start = initial_extrude_point - draw_normal * 500.0
-						extrude_line_end = initial_extrude_point + draw_normal * 500.0
-						_update_rectangle_preview()
-
-				# Create the new box
 				else:
-					_create_CSGBox3D()
-					is_drawing = false
-					is_extruding = false
-					has_started_extrusion = false
-					if draw_preview:
-						draw_preview.queue_free()
-						draw_preview = null
+					# End dragging and start extrusion if we were drawing
+					if is_drawing and not is_extruding:
+						is_extruding = true
+						has_started_extrusion = false
+						extrude_distance = 0.0
+						
+						var from = camera.project_ray_origin(editor_viewport.get_mouse_position())
+						var dir = camera.project_ray_normal(editor_viewport.get_mouse_position())
+						var intersection = draw_plane.intersects_ray(from, dir)
+						
+						if intersection:
+							initial_extrude_point = _snap_to_grid(intersection)
+							extrude_line_start = initial_extrude_point - draw_normal * 500.0
+							extrude_line_end = initial_extrude_point + draw_normal * 500.0
+							_update_rectangle_preview()
 
-			# Cancel the drawing
+			# Cancel with middle mouse button
 			elif event.button_index == MOUSE_BUTTON_MIDDLE and event.pressed:
 				is_drawing = false
 				is_extruding = false
@@ -288,6 +316,7 @@ func _input(event: InputEvent) -> void:
 
 		# Update section		
 		elif event is InputEventMouseMotion:
+
 			if current_mode == BuildMode.ADD:
 				#pass
 				if not is_drawing:
@@ -680,9 +709,9 @@ func _on_merge_mesh() -> void:
 
 	var nodes_to_keep = []
 	for node in voxel_root.get_children():
-		if not (node is CSGBox3D or node is CSGMesh3D):
+		if node is MeshInstance3D:
 			continue
-			
+		
 		if node.operation == CSGShape3D.OPERATION_SUBTRACTION:
 			var cuts_something = false
 			for other_node in voxel_root.get_children():
@@ -862,6 +891,7 @@ func _on_selection_changed() -> void:
 			hover_preview.queue_free()
 			hover_preview = null
 	else:
+		_change_mode(BuildMode.DISABLE)
 		if hover_preview:
 			hover_preview.queue_free()
 			hover_preview = null
