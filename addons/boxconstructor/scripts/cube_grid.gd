@@ -35,6 +35,7 @@ func _enter_tree() -> void:
 		voxel_root = CSGCombiner3D.new()
 		voxel_root.name = "CSGCombiner3D"
 		voxel_root.use_collision = true
+
 		
 		add_child(mesh_instance)
 		add_child(collision_shape)
