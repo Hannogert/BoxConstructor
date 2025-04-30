@@ -59,7 +59,6 @@ var dragged_mesh: CSGMesh3D = null
 var drag_start_position: Vector3
 var drag_plane: Plane
 var drag_start_offset: Vector3
-
 var is_mouse_in_viewport: bool = false
 
 
@@ -76,6 +75,7 @@ func _enter_tree() -> void:
 	toolbar.hide() # Hide toolbar by default
 	_connect_toolbar_signals() # Connect signals
 
+
 func _exit_tree() -> void:
 	if toolbar:
 		toolbar.queue_free() # Remove the toolbar
@@ -83,8 +83,6 @@ func _exit_tree() -> void:
 	if get_editor_interface().get_selection().selection_changed.is_connected(_on_selection_changed):
 		get_editor_interface().get_selection().selection_changed.disconnect(_on_selection_changed) # Disconnect signals
 
-func _process(_delta: float) -> void:
-	pass
 
 # This section handles all of the inputs
 func _input(event: InputEvent) -> void:
@@ -352,7 +350,7 @@ func _input(event: InputEvent) -> void:
 					var distance = distance_vec.length() * distance_vec.normalized().dot(extrude_line_normal)
 				
 					var new_distance = round(distance / grid_unit) * grid_unit
-					print(new_distance)
+					#print(new_distance)
 					if not is_equal_approx(extrude_distance, new_distance):
 						extrude_distance = new_distance
 						_update_rectangle_preview()
@@ -387,6 +385,7 @@ func _snap_to_grid(pos: Vector3) -> Vector3:
 		round(pos.z / grid_unit) * grid_unit
 	)
 
+
 func _align_grid_to_surface(normal: Vector3, hit_position: Vector3) -> void:
 	if not selected_grid:
 		return
@@ -396,7 +395,6 @@ func _align_grid_to_surface(normal: Vector3, hit_position: Vector3) -> void:
 
 	var mesh_size = mesh.scale
 	var collision_size = collision.scale
-
 
 	if not mesh or not collision:
 		return
@@ -425,6 +423,7 @@ func _align_grid_to_surface(normal: Vector3, hit_position: Vector3) -> void:
 	# Update the material
 	selected_grid._update_material()
 
+
 func _reset_grid_transform() -> void:
 	if not selected_grid:
 		return
@@ -450,8 +449,8 @@ func _reset_grid_transform() -> void:
 	# Update the shader
 	selected_grid._update_material()
 
-# === Drawing Methods ===
 
+# === Drawing Methods ===
 # Creates a MeshInstance3D shpere at the current hovered location when in ADD mode
 func _create_hover_preview() -> void:
 	# Clear the existing preview
@@ -478,11 +477,13 @@ func _create_hover_preview() -> void:
 		hover_preview.position = hover_point
 	# Do not add owner 
 		
+	
 # Changes the position of the hover preview
 func _update_hover_preview() -> void:
 	if not hover_preview:
 		return
 	hover_preview.global_position = hover_point
+
 
 func _calculate_base_rect_points() -> void:
 	if not selected_grid:
@@ -520,6 +521,7 @@ func _calculate_base_rect_points() -> void:
 			Vector3(min_x, max_y, draw_start.z)
 		]
 
+
 func create_rectangle_preview() -> void:
 	# Clear the previous preview
 	if draw_preview:
@@ -539,6 +541,7 @@ func create_rectangle_preview() -> void:
 	if voxel_root:
 		voxel_root.add_child(draw_preview)
 		draw_preview.owner = get_editor_interface().get_edited_scene_root()
+
 
 func _update_rectangle_preview() -> void:
 	if not draw_preview: return
@@ -592,6 +595,7 @@ func _update_rectangle_preview() -> void:
 	
 	immediate_mesh.surface_end()
 
+
 func add_thick_line(immediate_mesh: ImmediateMesh, start: Vector3, end: Vector3, thickness: float) -> void:
 	var direction = (end - start).normalized()
 
@@ -621,6 +625,7 @@ func create_rectangle(immediate_mesh: ImmediateMesh, v1: Vector3, v2: Vector3, v
 	immediate_mesh.surface_add_vertex(v2)
 	immediate_mesh.surface_add_vertex(v4)
 	immediate_mesh.surface_add_vertex(v3)
+
 
 # === Voxel Management Methods ===
 func _create_CSGBox3D() -> void:
@@ -671,6 +676,7 @@ func _create_CSGBox3D() -> void:
 	voxel_root.add_child(new_voxel)
 	new_voxel.owner = get_editor_interface().get_edited_scene_root()
 	_update_toolbar_states()
+
 
 func _on_merge_mesh() -> void:
 	if not voxel_root or voxel_root.get_child_count() == 0:
@@ -743,7 +749,8 @@ func _on_merge_mesh() -> void:
 				
 		_update_toolbar_states()
 		_change_mode(BuildMode.DISABLE)
-		
+
+
 func _on_edit_mesh() -> void:
 	if not voxel_root:
 		push_warning("No voxel root found!")
@@ -781,6 +788,7 @@ func _store_voxel_data(node: Node) -> Dictionary:
 			data["indices"] = mesh.surface_get_arrays(0)[Mesh.ARRAY_INDEX]
 	
 	return data
+
 
 # Recreates the CSGBox3D or CSGMesh3D from the stored metadata
 func _convert_to_voxels() -> void:
@@ -841,6 +849,7 @@ func _connect_toolbar_signals() -> void:
 	toolbar.merge_mesh.connect(_on_merge_mesh)
 	toolbar.edit_mesh.connect(_on_edit_mesh)
 
+
 func _update_toolbar_states() -> void:
 	if not voxel_root:
 		return
@@ -861,6 +870,7 @@ func _update_toolbar_states() -> void:
 	toolbar.set_merge_button_enabled(has_csg_boxes)
 	toolbar.set_select_button_enabled(has_csg_boxes)
 	toolbar.set_edit_button_enabled(has_voxel_mesh)
+
 
 func _on_selection_changed() -> void:
 	var selected = get_editor_interface().get_selection().get_selected_nodes()
@@ -883,6 +893,7 @@ func _on_selection_changed() -> void:
 		voxel_root = null
 		toolbar.hide()
 
+
 func _change_mode(new_mode: BuildMode) -> void:
 	if new_mode == BuildMode.ADD and voxel_root and voxel_root.has_node("VoxelMesh"):
 		push_warning("Can't switch to ADD mode while VoxelMesh exists. Use Edit to modify.")
@@ -900,6 +911,7 @@ func _change_mode(new_mode: BuildMode) -> void:
 
 	if voxel_root:
 		voxel_root.set_meta("_edit_lock_", current_mode != BuildMode.SELECT)
+
 
 # === Edge Movement Methods ===
 func _get_edges(node: Node) -> Array:
@@ -965,6 +977,7 @@ func _get_edges(node: Node) -> Array:
 	
 	return edges
 
+
 # Finds the closest edge to the mouse
 func _find_closest_edge(node: Node, mouse_pos: Vector2) -> Array:
 	if not camera:
@@ -1005,6 +1018,7 @@ func _find_closest_edge(node: Node, mouse_pos: Vector2) -> Array:
 			closest_edge = edge
 
 	return closest_edge
+
 
 # Method that draws a line on the currently hovered edge
 func _create_edge_preview(edge: Array) -> void:
