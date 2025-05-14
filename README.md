@@ -22,9 +22,8 @@ your-project/
 
 ## Usage
 1. Create a new scene.
-2. Add a Node3D to your scene.
-3. Add a child node named CubeGrid3D.
-4. Select the Move Mode from the Godot toolbar so the plugin toolbar stays visible while you click and drag
+2. Add a child node named CubeGrid3D.
+3. Select the Move Mode from the Godot toolbar so the plugin toolbar stays visible while you click and drag
 ![MoveTool](.github/images/move_tool.png)
 
 ## Feature overview
