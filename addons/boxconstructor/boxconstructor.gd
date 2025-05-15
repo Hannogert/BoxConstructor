@@ -26,10 +26,10 @@ var toolbar: PanelContainer
 var editor_viewport = get_editor_interface().get_editor_viewport_3d()
 var camera = editor_viewport.get_camera_3d()
 
-# === Grid and Voxel properties ===
-var voxel_root: CSGCombiner3D
+# === Grid and CSG properties ===
+var csg_root: CSGCombiner3D
 var selected_grid: CubeGrid3D
-var voxel_mesh: MeshInstance3D = null
+var csg_mesh: MeshInstance3D = null
 
 # === Rectangle drawing properties ===
 var is_drawing: bool = false
@@ -115,7 +115,7 @@ func _input(event: InputEvent) -> void:
 			if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 				if not is_dragging_edge:
 					if edge_preview and edge_preview.visible:
-						for child in voxel_root.get_children():
+						for child in csg_root.get_children():
 							if child is CSGBox3D or child is CSGMesh3D:
 								# Get all of the edges of CSGBox3D or CSGMesh3D
 								var edges = _get_edges(child)
@@ -202,7 +202,7 @@ func _input(event: InputEvent) -> void:
 			
 			# Highlight the closest edge
 			elif not is_dragging_edge:
-				if not camera or not voxel_root:
+				if not camera or not csg_root:
 					if edge_preview:
 						edge_preview.hide()
 					return
@@ -212,7 +212,7 @@ func _input(event: InputEvent) -> void:
 				var closest_node = null
 				var closest_distance = INF
 				
-				for child in voxel_root.get_children():
+				for child in csg_root.get_children():
 					if not (child is CSGBox3D or child is CSGMesh3D):
 						continue
 					
@@ -472,8 +472,8 @@ func _create_hover_preview() -> void:
 	hover_preview.material_override = material
 
 	# Add it to the scene
-	if voxel_root:
-		voxel_root.add_child(hover_preview)
+	if csg_root:
+		csg_root.add_child(hover_preview)
 		hover_preview.position = hover_point
 	# Do not add owner 
 		
@@ -538,8 +538,8 @@ func create_rectangle_preview() -> void:
 	material.no_depth_test = true
 	draw_preview.material_override = material
 	
-	if voxel_root:
-		voxel_root.add_child(draw_preview)
+	if csg_root:
+		csg_root.add_child(draw_preview)
 		draw_preview.owner = get_editor_interface().get_edited_scene_root()
 
 
@@ -627,12 +627,12 @@ func create_rectangle(immediate_mesh: ImmediateMesh, v1: Vector3, v2: Vector3, v
 	immediate_mesh.surface_add_vertex(v3)
 
 
-# === Voxel Management Methods ===
+# === CSG Management Methods ===
 func _create_CSGBox3D() -> void:
-	var new_voxel = CSGBox3D.new()
-	new_voxel.use_collision = true
-	new_voxel.set_meta("_edit_lock_", true)
-	new_voxel.set_meta("_edit_group_", true)
+	var new_box = CSGBox3D.new()
+	new_box.use_collision = true
+	new_box.set_meta("_edit_lock_", true)
+	new_box.set_meta("_edit_group_", true)
 	
 
 	var min_point = base_rect_points[0]
@@ -666,23 +666,23 @@ func _create_CSGBox3D() -> void:
 		size.z = abs(extrude_distance)
 		center += draw_normal * (extrude_distance * 0.5)
 		
-	new_voxel.size = size
-	new_voxel.position = center
+	new_box.size = size
+	new_box.position = center
 
 	# Depending on the extrusion distance set the operation
 	if extrude_distance < 0:
-		new_voxel.operation = CSGShape3D.OPERATION_SUBTRACTION
+		new_box.operation = CSGShape3D.OPERATION_SUBTRACTION
 
-	voxel_root.add_child(new_voxel)
-	new_voxel.owner = get_editor_interface().get_edited_scene_root()
+	csg_root.add_child(new_box)
+	new_box.owner = get_editor_interface().get_edited_scene_root()
 	_update_toolbar_states()
 
 
 func _on_merge_mesh() -> void:
-	if not voxel_root or voxel_root.get_child_count() == 0:
+	if not csg_root or csg_root.get_child_count() == 0:
 		return
 	# Dont allow to merge an already merged mesh
-	if voxel_root.has_node("VoxelMesh"):
+	if csg_root.has_node("CSGMesh"):
 		push_warning("Already merged!")
 		return
 	
@@ -694,15 +694,15 @@ func _on_merge_mesh() -> void:
 	is_dragging_edge = false
 
 	var nodes_to_keep = []
-	# Go over all of the children of the voxel root and check if they are CSGBox3D or CSGMesh3D
-	for node in voxel_root.get_children():
+	# Go over all of the children of the csg root and check if they are CSGBox3D or CSGMesh3D
+	for node in csg_root.get_children():
 		if node is MeshInstance3D:
 			continue
 		
 		# For subtraction operations, check if it actually cuts something
 		if node.operation == CSGShape3D.OPERATION_SUBTRACTION:
 			var cuts_something = false
-			for other_node in voxel_root.get_children():
+			for other_node in csg_root.get_children():
 				if other_node.operation == CSGShape3D.OPERATION_UNION:
 					if node is CSGBox3D and other_node is CSGBox3D:
 						var node_bounds = AABB(
@@ -728,23 +728,23 @@ func _on_merge_mesh() -> void:
 
 	var nodes_data = []
 	for node in nodes_to_keep:
-		nodes_data.append(_store_voxel_data(node))
+		nodes_data.append(_store_mesh_data(node))
 	
-	var meshes = voxel_root.get_meshes()
+	var meshes = csg_root.get_meshes()
 	if meshes.size() > 1:
-		if not voxel_mesh:
-			voxel_mesh = MeshInstance3D.new()
-			voxel_mesh.name = "VoxelMesh"
-			voxel_root.add_child(voxel_mesh)
-			voxel_mesh.owner = get_editor_interface().get_edited_scene_root()
+		if not csg_mesh:
+			csg_mesh = MeshInstance3D.new()
+			csg_mesh.name = "CSGMesh"
+			csg_root.add_child(csg_mesh)
+			csg_mesh.owner = get_editor_interface().get_edited_scene_root()
 
-		voxel_mesh.mesh = meshes[1]
-		voxel_mesh.set_meta("voxel_data", {
+		csg_mesh.mesh = meshes[1]
+		csg_mesh.set_meta("csg_data", {
 			"nodes": nodes_data
 		})
 		
-		for child in voxel_root.get_children():
-			if child != voxel_mesh:
+		for child in csg_root.get_children():
+			if child != csg_mesh:
 				child.queue_free()
 				
 		_update_toolbar_states()
@@ -752,24 +752,24 @@ func _on_merge_mesh() -> void:
 
 
 func _on_edit_mesh() -> void:
-	if not voxel_root:
-		push_warning("No voxel root found!")
+	if not csg_root:
+		push_warning("No Mesh root found!")
 		return
 		
-	if not voxel_root.has_node("VoxelMesh"):
-		push_warning("No VoxelMesh to edit!")
+	if not csg_root.has_node("CSGMesh"):
+		push_warning("No CSGMesh to edit!")
 		return
 
-	voxel_mesh = voxel_root.get_node("VoxelMesh")
-	var data = voxel_mesh.get_meta("voxel_data")
+	csg_mesh = csg_root.get_node("CSGMesh")
+	var data = csg_mesh.get_meta("csg_data")
 	if not data:
-		push_warning("No voxel data found in mesh!")
+		push_warning("No CSG data found in mesh!")
 		return
 	# Deconstruct the mesh into CSGBox3D or CSGMesh3D
-	_convert_to_voxels()
+	_convert_to_boxes()
 
 # Stores the information about the CSGBox3D or CSGMesh3D
-func _store_voxel_data(node: Node) -> Dictionary:
+func _store_mesh_data(node: Node) -> Dictionary:
 	# Create a dictionary to store information
 	var data = {
 		"position": node.position,
@@ -791,15 +791,15 @@ func _store_voxel_data(node: Node) -> Dictionary:
 
 
 # Recreates the CSGBox3D or CSGMesh3D from the stored metadata
-func _convert_to_voxels() -> void:
+func _convert_to_boxes() -> void:
 
-	voxel_mesh = voxel_root.get_node("VoxelMesh")
-	if not voxel_mesh:
-		push_warning("No VoxelMesh node found!")
+	csg_mesh = csg_root.get_node("CSGMesh")
+	if not csg_mesh:
+		push_warning("No CSGMesh node found!")
 		return
-	var data = voxel_mesh.get_meta("voxel_data")
+	var data = csg_mesh.get_meta("csg_data")
 	if not data:
-		push_warning("No voxel data found in mesh!")
+		push_warning("No CSG data found in mesh!")
 		return
 	
 	# Go through all of the nodes and recreate them
@@ -828,12 +828,12 @@ func _convert_to_voxels() -> void:
 		new_node.set_meta("_edit_lock_", true)
 		new_node.set_meta("_edit_group_", true)
 		
-		voxel_root.add_child(new_node)
+		csg_root.add_child(new_node)
 		new_node.owner = get_editor_interface().get_edited_scene_root()
 
-	# Remove the VoxelMesh
-	voxel_mesh.queue_free()
-	voxel_mesh = null
+	# Remove the CSGMesh
+	csg_mesh.queue_free()
+	csg_mesh = null
 
 	toolbar.update_button_states(false)
 	_change_mode(BuildMode.DISABLE)
@@ -851,32 +851,32 @@ func _connect_toolbar_signals() -> void:
 
 
 func _update_toolbar_states() -> void:
-	if not voxel_root:
+	if not csg_root:
 		return
 		
-	var has_voxel_mesh = voxel_root.has_node("VoxelMesh")
+	var has_csg_mesh = csg_root.has_node("CSGMesh")
 	var has_csg_boxes = false
 	
-	for child in voxel_root.get_children():
+	for child in csg_root.get_children():
 		if child is CSGBox3D or child is CSGMesh3D:
 			has_csg_boxes = true
 			break
 			
-	if has_voxel_mesh:
+	if has_csg_mesh:
 		toolbar.update_button_states(true)
 	else:
 		toolbar.update_button_states(false)
 	
 	toolbar.set_merge_button_enabled(has_csg_boxes)
 	toolbar.set_select_button_enabled(has_csg_boxes)
-	toolbar.set_edit_button_enabled(has_voxel_mesh)
+	toolbar.set_edit_button_enabled(has_csg_mesh)
 
 
 func _on_selection_changed() -> void:
 	var selected = get_editor_interface().get_selection().get_selected_nodes()
 	if selected.size() == 1 and selected[0] is CubeGrid3D:
 		selected_grid = selected[0]
-		voxel_root = selected_grid.get_node("CSGCombiner3D")
+		csg_root = selected_grid.get_node("CSGCombiner3D")
 		toolbar.show()
 		toolbar.connect_to_grid(selected_grid)
 		_update_toolbar_states()
@@ -890,13 +890,13 @@ func _on_selection_changed() -> void:
 			hover_preview.queue_free()
 			hover_preview = null
 		selected_grid = null
-		voxel_root = null
+		csg_root = null
 		toolbar.hide()
 
 
 func _change_mode(new_mode: BuildMode) -> void:
-	if new_mode == BuildMode.ADD and voxel_root and voxel_root.has_node("VoxelMesh"):
-		push_warning("Can't switch to ADD mode while VoxelMesh exists. Use Edit to modify.")
+	if new_mode == BuildMode.ADD and csg_root and csg_root.has_node("CSGMesh"):
+		push_warning("Can't switch to ADD mode while CSGMesh exists. Use Edit to modify.")
 		toolbar.set_active_mode(current_mode)
 		return
 
@@ -909,8 +909,8 @@ func _change_mode(new_mode: BuildMode) -> void:
 	current_edge = []
 	is_dragging_edge = false
 
-	if voxel_root:
-		voxel_root.set_meta("_edit_lock_", current_mode != BuildMode.SELECT)
+	if csg_root:
+		csg_root.set_meta("_edit_lock_", current_mode != BuildMode.SELECT)
 
 
 # === Edge Movement Methods ===
@@ -1040,8 +1040,8 @@ func _create_edge_preview(edge: Array) -> void:
 		material.no_depth_test = true
 		edge_preview.material_override = material
 		
-		if voxel_root:
-			voxel_root.add_child(edge_preview)
+		if csg_root:
+			csg_root.add_child(edge_preview)
 	
 	edge_preview.show()
 	var immediate_mesh = edge_preview.mesh as ImmediateMesh
@@ -1097,7 +1097,7 @@ func _convert_box_to_CSGMesh(box: CSGBox3D) -> CSGMesh3D:
 	csg_mesh.operation = box.operation
 	csg_mesh.use_collision = box.use_collision
 	
-	voxel_root.add_child(csg_mesh)
+	csg_root.add_child(csg_mesh)
 	csg_mesh.owner = get_editor_interface().get_edited_scene_root()
 	
 	box.queue_free()

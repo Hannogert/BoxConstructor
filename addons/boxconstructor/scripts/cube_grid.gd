@@ -10,7 +10,7 @@ var grid_scale: float = 1:
 
 var mesh_instance: MeshInstance3D
 var grid_material: ShaderMaterial
-var voxel_root: CSGCombiner3D
+var csg_root: CSGCombiner3D
 signal grid_created(scale: float)
 
 func _enter_tree() -> void:
@@ -32,14 +32,14 @@ func _enter_tree() -> void:
 			mesh_instance.owner = null
 
 	# Check if the CSGCombiner3D already exists
-	voxel_root = self.get_node_or_null("CSGCombiner3D")
-	if not voxel_root:
-		voxel_root = CSGCombiner3D.new()
-		voxel_root.name = "CSGCombiner3D"
-		voxel_root.use_collision = true
-		add_child(voxel_root)
+	csg_root = self.get_node_or_null("CSGCombiner3D")
+	if not csg_root:
+		csg_root = CSGCombiner3D.new()
+		csg_root.name = "CSGCombiner3D"
+		csg_root.use_collision = true
+		add_child(csg_root)
 		if Engine.is_editor_hint():
-			voxel_root.owner = get_tree().edited_scene_root
+			csg_root.owner = get_tree().edited_scene_root
 
 	# Check if the CubeGridCollisionShape3D already exists
 	var collision_shape = get_node_or_null("CubeGridCollisionShape3D")
