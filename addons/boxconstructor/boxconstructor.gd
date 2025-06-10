@@ -61,12 +61,25 @@ var drag_plane: Plane
 var drag_start_offset: Vector3
 var is_mouse_in_viewport: bool = false
 
+var undo_redo
+var drag_start_vertices: PackedVector3Array
+var drag_start_indices: PackedInt32Array
+
+func _update_mesh_arrays(mesh_node: CSGMesh3D, vertices: PackedVector3Array, indices: PackedInt32Array) -> void:
+	var arr_mesh = mesh_node.mesh as ArrayMesh
+	if arr_mesh:
+		var arrays = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = vertices
+		arrays[Mesh.ARRAY_INDEX] = indices
+		arr_mesh.clear_surfaces()
+		arr_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 # === Lifecycle Methods ===
 func _enter_tree() -> void:
 	get_editor_interface().get_selection().selection_changed.connect(_on_selection_changed)
 	editor_viewport = get_editor_interface().get_editor_viewport_3d()
-
+	undo_redo = get_undo_redo()
 	toolbar = preload("res://addons/boxconstructor/scripts/toolbar.gd").new(self) # Create the toolbar
 	var viewport_base = editor_viewport.get_parent().get_parent()
 	viewport_base.add_child(toolbar)
@@ -139,14 +152,41 @@ func _input(event: InputEvent) -> void:
 
 											else:
 												dragged_mesh = child
+
+											var arr_mesh = dragged_mesh.mesh as ArrayMesh
+											if arr_mesh:
+												var arrays = arr_mesh.surface_get_arrays(0)
+												drag_start_vertices = arrays[Mesh.ARRAY_VERTEX].duplicate()
+												drag_start_indices = arrays[Mesh.ARRAY_INDEX].duplicate()
 											is_dragging_edge = true # Set dragging to true
 											current_edge = edge		# Set the current edge to the one we are dragging
 											drag_start_offset = _snap_to_grid(intersection) # Starting position of edge drag
 										break
 				else:
-					is_dragging_edge = false
-					dragged_mesh = null
-					edge_preview.hide()
+					if is_dragging_edge and dragged_mesh:
+						var arr_mesh = dragged_mesh.mesh as ArrayMesh
+						if arr_mesh:
+							var final_arrays = arr_mesh.surface_get_arrays(0)
+							undo_redo.create_action("Move Edge")
+							
+							# Store the current state
+							var current_mesh = arr_mesh.duplicate(true)
+							
+							# Create original mesh
+							var original_mesh = ArrayMesh.new()
+							var arrays = []
+							arrays.resize(Mesh.ARRAY_MAX)
+							arrays[Mesh.ARRAY_VERTEX] = drag_start_vertices
+							arrays[Mesh.ARRAY_INDEX] = drag_start_indices
+							original_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+							
+							undo_redo.add_do_property(dragged_mesh, "mesh", current_mesh)
+							undo_redo.add_undo_property(dragged_mesh, "mesh", original_mesh)
+							undo_redo.commit_action()
+						
+						is_dragging_edge = false
+						dragged_mesh = null
+						edge_preview.hide()
 					
 		if event is InputEventMouseMotion:
 			if is_dragging_edge and dragged_mesh:
@@ -287,14 +327,15 @@ func _input(event: InputEvent) -> void:
 							extrude_line_normal = draw_normal
 							_update_rectangle_preview()
 
-			# Cancel with middle mouse button
-			elif event.button_index == MOUSE_BUTTON_MIDDLE and event.pressed:
-				is_drawing = false
-				is_extruding = false
-				has_started_extrusion = false
-				if draw_preview:
-					draw_preview.queue_free()
-					draw_preview = null
+		elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			is_drawing = false
+			is_extruding = false
+			has_started_extrusion = false
+			if draw_preview:
+				draw_preview.queue_free()
+				draw_preview = null
+				
+			get_viewport().set_input_as_handled()
 
 		# Update section		
 		elif event is InputEventMouseMotion:
@@ -665,7 +706,10 @@ func _create_CSGBox3D() -> void:
 	else:
 		size.z = abs(extrude_distance)
 		center += draw_normal * (extrude_distance * 0.5)
-		
+
+	if size.x < 0.0001 or size.y < 0.0001 or size.z < 0.0001:
+		return
+
 	new_box.size = size
 	new_box.position = center
 
@@ -673,10 +717,13 @@ func _create_CSGBox3D() -> void:
 	if extrude_distance < 0:
 		new_box.operation = CSGShape3D.OPERATION_SUBTRACTION
 
-	csg_root.add_child(new_box)
-	new_box.owner = get_editor_interface().get_edited_scene_root()
+	undo_redo.create_action("Create CSGBox3D")
+	undo_redo.add_do_method(csg_root, "add_child", new_box)
+	undo_redo.add_do_method(new_box, "set_owner", get_editor_interface().get_edited_scene_root())
+	undo_redo.add_undo_method(csg_root, "remove_child", new_box)
+	undo_redo.commit_action()
 	_update_toolbar_states()
-
+	
 
 func _on_merge_mesh() -> void:
 	if not csg_root or csg_root.get_child_count() == 0:
@@ -881,6 +928,10 @@ func _on_selection_changed() -> void:
 		toolbar.connect_to_grid(selected_grid)
 		_update_toolbar_states()
 
+		var root := EditorInterface.get_base_control()
+		var toolbar = root.find_children("", "Node3DEditor", true, false)[0].get_child(0).find_children("", "HBoxContainer", true, false)[0]
+		var btn = toolbar.get_child(2)
+		btn.pressed.emit()
 		if hover_preview:
 			hover_preview.queue_free()
 			hover_preview = null
